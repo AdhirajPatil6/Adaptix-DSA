@@ -92,13 +92,26 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                 
                 const btnClass = ctx.decision.confidenceLabel === 'Low' ? 'refactor-btn refactor-btn-low' : 'refactor-btn';
 
+                const impactText = ctx.decision.impactLevel === 'high' ? 'High Impact Optimization' : 
+                                   ctx.decision.impactLevel === 'medium' ? 'Medium Impact Optimization' : 'Subtle Optimization';
+                const impactColor = ctx.decision.impactLevel === 'high' ? 'var(--accent-orange)' : 
+                                    ctx.decision.impactLevel === 'medium' ? '#facc15' : 'var(--text-secondary)';
+
                 const suggestionCard = ctx.decision.suggestedStructure
                     ? `<div class="suggestion-box animate-pulse">
                         <div class="suggestion-header" style="justify-content: space-between;">
-                            <strong style="color: var(--accent-orange);">High Impact Optimization</strong>
+                            <strong style="color: ${impactColor};">${impactText}</strong>
                             <span class="badge ${confColorClass}">${ctx.decision.confidenceLabel} Confidence</span>
                         </div>
                         <div class="suggestion-body">
+                            
+                            ${ctx.decision.insight ? `
+                            <div style="background: rgba(59, 130, 246, 0.15); border-left: 3px solid #3b82f6; padding: 6px; margin-bottom: 12px; border-radius: 2px;">
+                                <strong style="color: #3b82f6; font-size: 0.7rem;">💡 Insight</strong>
+                                <p style="margin-top: 2px; color: var(--text-secondary); font-size: 0.65rem;">${ctx.decision.insight}</p>
+                            </div>
+                            ` : ''}
+
                             <p style="margin-bottom: 8px;">Refactor to <span class="badge recommendation">${getHumanReadableDS(ctx.decision.suggestedStructure)}</span></p>
                             
                             <div class="improvement-path">
@@ -118,49 +131,68 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                             </div>
                             
                             <details class="explain-details">
-                                <summary>Explain Decision</summary>
+                                <summary>Deep Analysis</summary>
                                 <div class="explain-content">
-                                    <div style="margin-bottom: 4px;">
-                                        <strong style="color: var(--text-primary);">Why current is suboptimal:</strong>
-                                        <p style="margin-top: 2px;">→ ${ctx.decision.whyCurrentBad}</p>
+                                    
+                                    ${ctx.decision.conflictWarning ? `
+                                    <div style="background: rgba(239, 68, 68, 0.15); border-left: 3px solid #ef4444; padding: 6px; margin-bottom: 8px; border-radius: 2px;">
+                                        <strong style="color: #ef4444; font-size: 0.7rem;">⚠️ Conflict Warning</strong>
+                                        <p style="margin-top: 2px; color: var(--text-secondary); font-size: 0.65rem;">${ctx.decision.conflictWarning}</p>
                                     </div>
-                                    <div style="margin-bottom: 4px;">
-                                        <strong style="color: var(--text-primary);">Why suggested is better:</strong>
-                                        <p style="margin-top: 2px;">→ ${ctx.decision.whySuggestedBetter}</p>
+                                    ` : ''}
+
+                                    <div style="margin-bottom: 8px;">
+                                        <strong style="color: var(--accent-green);">Primary Reason:</strong>
+                                        <p style="margin: 2px 0 0 0; color: var(--text-primary); font-size: 0.7rem;">${ctx.decision.explanation?.primaryReason || ''}</p>
+                                    </div>
+
+                                    <div style="margin-bottom: 8px;">
+                                        <strong style="color: var(--text-primary); font-size: 0.65rem;">Supporting Reasons:</strong>
+                                        <ul style="margin: 2px 0 0 0; padding-left: 16px; color: var(--text-secondary); font-size: 0.65rem;">
+                                            ${ctx.decision.explanation?.supportingReasons.map(r => `<li>${r}</li>`).join('') || ''}
+                                        </ul>
+                                    </div>
+
+                                    ${ctx.decision.explanation?.tradeoffs && ctx.decision.explanation.tradeoffs.length > 0 ? `
+                                    <div style="margin-bottom: 8px;">
+                                        <strong style="color: #ea580c; font-size: 0.65rem;">Trade-offs:</strong>
+                                        <ul style="margin: 2px 0 0 0; padding-left: 16px; color: var(--text-secondary); font-size: 0.65rem;">
+                                            ${ctx.decision.explanation.tradeoffs.map(r => `<li>${r}</li>`).join('')}
+                                        </ul>
+                                    </div>
+                                    ` : ''}
+
+                                    <div style="margin-bottom: 8px; border-top: 1px dashed var(--glass-border); padding-top: 8px;">
+                                        <strong style="color: var(--accent-orange);">Why not others?</strong>
+                                        <ul style="margin: 4px 0 0 0; padding-left: 16px; color: var(--text-secondary); font-size: 0.65rem;">
+                                            ${ctx.decision.explanation?.rejectedReasons.map(r => `<li>${r}</li>`).join('') || ''}
+                                        </ul>
                                     </div>
                                     
-                                    <div style="margin-top: 8px; border-top: 1px dashed var(--glass-border); padding-top: 8px;">
-                                        <strong style="color: var(--text-primary); font-size: 0.7rem;">Operations Breakdown:</strong>
-                                        <div style="display: flex; gap: 8px; margin-top: 4px; font-size: 0.65rem;">
-                                            <span>Insert: ${ctx.monitor.insertCount} (${(ctx.monitor.insertRatio * 100).toFixed(0)}%)</span>
-                                            <span>Search: ${ctx.monitor.searchCount} (${(ctx.monitor.searchRatio * 100).toFixed(0)}%)</span>
-                                            <span>Delete: ${ctx.monitor.deleteCount} (${(ctx.monitor.deleteRatio * 100).toFixed(0)}%)</span>
+                                    <div style="margin-bottom: 4px; border-top: 1px dashed var(--glass-border); padding-top: 8px;">
+                                        <strong style="color: var(--text-primary);">What happens if you switch?</strong>
+                                        <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px; font-size: 0.65rem; color: var(--text-secondary);">
+                                            <span>⚡️ <strong>Speed:</strong> ${ctx.decision.simulation?.speedGain.toFixed(1) || 1}x multiplier</span>
+                                            <span>💾 <strong>Memory:</strong> ${ctx.decision.simulation?.memoryImpact || 'Similar'} overhead</span>
+                                            ${ctx.decision.simulation?.featureLoss && ctx.decision.simulation.featureLoss.length > 0 ? 
+                                                `<span style="color: #ea580c;">⚠️ <strong>Losses:</strong> ${ctx.decision.simulation.featureLoss.join(', ')}</span>` : ''}
                                         </div>
                                     </div>
-                                    
-                                    <div style="margin-top: 8px; border-top: 1px dashed var(--glass-border); padding-top: 8px;">
-                                        <strong style="color: var(--text-primary); font-size: 0.7rem;">Context Flags:</strong>
-                                        <div style="display: flex; flex-direction: column; gap: 2px; margin-top: 4px; font-size: 0.65rem;">
-                                            <span>${ctx.hasOrdering ? '✓ Ordering required' : '✗ No ordering needed'}</span>
-                                            <span>${ctx.usesIndexAccess ? '✓ Index access detected' : '✗ No index access'}</span>
-                                            <span>${ctx.sequentialIteration ? '✓ Sequential iteration' : '✗ No sequential iteration'}</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <p style="margin-top: 8px; color: var(--accent-orange);">${ctx.decision.reason}</p>
                                 </div>
                             </details>
 
                             <button class="${btnClass}" onclick="applyRefactor('${varName}', '${ctx.decision.suggestedStructure}')">Apply Refactor</button>
                             
-                            ${ctx.decision.alternativeStructure ? `
+                            ${ctx.decision.alternativeDetails ? `
                             <div class="alternative-box" style="margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.15); border-radius: 6px; border: 1px dashed var(--glass-border);">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                                     <span style="font-size: 0.7rem; color: var(--text-secondary);">Alternative</span>
-                                    <span class="badge recommendation" style="background: rgba(255,255,255,0.1); color: var(--text-primary);">${getHumanReadableDS(ctx.decision.alternativeStructure)}</span>
+                                    <span class="badge recommendation" style="background: rgba(255,255,255,0.1); color: var(--text-primary);">${getHumanReadableDS(ctx.decision.alternativeDetails.name)}</span>
                                 </div>
-                                <p style="font-size: 0.65rem; color: var(--text-secondary); margin-bottom: 6px; font-style: italic;">${ctx.decision.alternativeReason}</p>
-                                <button class="refactor-btn refactor-btn-alt" style="padding: 4px; font-size: 0.7rem; margin-top: 0;" onclick="applyRefactor('${varName}', '${ctx.decision.alternativeStructure}')">Apply Alternative</button>
+                                <ul style="margin: 0 0 8px 0; padding-left: 16px; color: var(--text-secondary); font-size: 0.65rem; font-style: italic;">
+                                    ${ctx.decision.alternativeDetails.traits.map(t => `<li>${t}</li>`).join('')}
+                                </ul>
+                                <button class="refactor-btn refactor-btn-alt" style="padding: 4px; font-size: 0.7rem; margin-top: 0;" onclick="applyRefactor('${varName}', '${ctx.decision.alternativeDetails.name}')">Apply Alternative</button>
                             </div>
                             ` : ''}
                         </div>

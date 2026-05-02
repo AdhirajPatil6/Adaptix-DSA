@@ -1,8 +1,8 @@
 import { Monitor } from './monitor';
 import { DecisionEngine, DecisionResult } from './decision';
-import { applySafetyFilter } from './safety';
 import { detectIntent, IntentSignal } from './intent';
 import { LearningLayer } from './learning';
+import { buildConstraints } from './constraints';
 
 export interface AnalysisContext {
     monitor: Monitor;
@@ -314,37 +314,15 @@ export class Analyzer {
             const hasOrdering = hasOrderingMap.get(varName) || false;
             const usesIndexAccess = usesIndexAccessMap.get(varName) || false;
             const sequentialIteration = sequentialIterationMap.get(varName) || false;
-
             // Intent detection (Step 8)
             const intentSignal = detectIntent(varName, lines, monitor.currentStructure);
 
-            let decision = this.decisionEngine.determineBestStructure(monitor, hasOrdering, intentSignal);
+            // Step 1: Constraint System replaces old safety filter
+            const constraints = buildConstraints({
+                hasOrdering, usesIndexAccess, sequentialIteration
+            }, monitor);
 
-            // Safety filter: block incorrect suggestions based on context flags
-            const safetyResult = applySafetyFilter(
-                decision.suggestedStructure,
-                monitor.currentStructure,
-                { hasOrdering, usesIndexAccess, sequentialIteration }
-            );
-
-            if (!safetyResult.passed) {
-                // Nullify the suggestion — current structure is safer
-                decision = {
-                    suggestedStructure: null,
-                    reason: safetyResult.blockedReason,
-                    expectedImprovement: null,
-                    ruleTriggered: null,
-                    currentComplexity: null,
-                    suggestedComplexity: null,
-                    speedup: null,
-                    confidence: 0,
-                    confidenceLabel: 'None',
-                    whyCurrentBad: null,
-                    whySuggestedBetter: null,
-                    alternativeStructure: null,
-                    alternativeReason: null
-                };
-            }
+            let decision = this.decisionEngine.determineBestStructure(monitor, constraints, intentSignal);
 
             results.set(varName, { monitor, decision, hasOrdering, usesIndexAccess, sequentialIteration, intentSignal });
         }

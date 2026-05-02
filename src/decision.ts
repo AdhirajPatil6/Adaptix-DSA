@@ -1,6 +1,13 @@
 import { Monitor } from './monitor';
 import { IntentSignal } from './intent';
 import { LearningLayer } from './learning';
+import { Constraints } from './constraints';
+import { evaluateStructures } from './selector';
+import { simulateChange, SimulationResult } from './simulation';
+import { generateExplanation, ExplanationResult } from './explanation';
+import { validateExplanation } from './validation';
+import { checkConsistency } from './consistency';
+import { generateInsight } from './insight';
 
 export interface DecisionResult {
     suggestedStructure: string | null;
@@ -16,9 +23,17 @@ export interface DecisionResult {
     whySuggestedBetter: string | null;
     alternativeStructure: string | null;
     alternativeReason: string | null;
+    
+    // New Advanced Features
+    explanation?: ExplanationResult;
+    simulation?: SimulationResult;
+    conflictWarning?: string | null;
+    impactLevel: 'high' | 'medium' | 'low';
+    insight: string | null;
+    alternativeDetails?: { name: string; traits: string[] };
 }
 
-function getComplexityWeight(ds: string, operation: 'search' | 'insert' | 'delete'): number {
+export function getComplexityWeight(ds: string, operation: 'search' | 'insert' | 'delete'): number {
     // Enhanced cost weight map with realistic penalties
     // Base: O(1)=1, O(logN)=5, O(N)=100
     if (ds.includes('vector')) {
@@ -39,7 +54,7 @@ function getComplexityWeight(ds: string, operation: 'search' | 'insert' | 'delet
     return 10;
 }
 
-function getComplexityString(ds: string, operation: 'search' | 'insert' | 'delete'): string {
+export function getComplexityString(ds: string, operation: 'search' | 'insert' | 'delete'): string {
     const weight = getComplexityWeight(ds, operation);
     if (weight === 1) { return 'O(1)'; }
     if (weight === 5) { return 'O(log n)'; }
@@ -59,7 +74,7 @@ function clamp(value: number, min: number, max: number): number {
 
 function calculateConfidence(
     monitor: Monitor,
-    hasOrdering: boolean,
+    validOptions: string[],
     dominantRatio: number,
     intentSignal?: IntentSignal
 ): { confidence: number; confidenceLabel: 'Strong' | 'Moderate' | 'Low' } {
@@ -69,10 +84,15 @@ function calculateConfidence(
     // Volume bonus: more operations = more data = more confident (capped at 0.2)
     const volumeBonus = clamp(monitor.totalOperations / 10, 0, 0.2);
 
-    // Conflicting signals penalty: multiple high ratios = ambiguous pattern
+    // Conflict penalty (Step 9 handled via constraints/selector)
     const highRatios = [monitor.insertRatio, monitor.searchRatio, monitor.deleteRatio]
         .filter(r => r > 0.25).length;
-    const conflictPenalty = highRatios >= 3 ? -0.25 : highRatios >= 2 ? -0.1 : 0;
+    let conflictPenalty = highRatios >= 3 ? -0.25 : highRatios >= 2 ? -0.1 : 0;
+
+    // If there are many valid options left, we might be less confident
+    if (validOptions.length > 3) {
+        conflictPenalty -= 0.1;
+    }
 
     // Intent alignment bonus (Step 8): if intent agrees, boost confidence
     const intentBonus = (intentSignal && intentSignal.intent !== 'none')
@@ -106,7 +126,7 @@ export class DecisionEngine {
 
     public determineBestStructure(
         monitor: Monitor,
-        hasOrdering: boolean = false,
+        constraints: Constraints,
         intentSignal?: IntentSignal
     ): DecisionResult {
         const { currentStructure, searchRatio, insertRatio, deleteRatio, totalOperations } = monitor;
@@ -115,70 +135,72 @@ export class DecisionEngine {
             suggestedStructure: null, reason: null, expectedImprovement: null,
             ruleTriggered: null, currentComplexity: null, suggestedComplexity: null, speedup: null,
             confidence: 0, confidenceLabel: 'None', whyCurrentBad: null, whySuggestedBetter: null,
-            alternativeStructure: null, alternativeReason: null
+            alternativeStructure: null, alternativeReason: null,
+            conflictWarning: null, impactLevel: 'low', insight: null
         };
 
         if (totalOperations < 1) { return emptyResult; }
 
-        let suggestion: string | null = null;
-        let reason = '';
-        let ruleTriggered = '';
-        let domOp: 'search' | 'insert' | 'delete' = 'insert';
-        let alternativeStructure: string | null = null;
-        let alternativeReason: string | null = null;
+        // STEP 4: Integrate new constraint-based filtering
+        const { valid, rejected, conflictWarning } = evaluateStructures(constraints);
+        
+        emptyResult.conflictWarning = conflictWarning;
 
-        if (searchRatio > 0.6) {
-            domOp = 'search';
-            if (hasOrdering) {
-                suggestion = 'std::map';
-                reason = 'Frequent searches with required ordering. Map preserves sort order.';
-                ruleTriggered = 'search_ratio > 0.6 AND has_ordering';
-            } else {
-                suggestion = currentStructure.includes('set') ? 'std::unordered_set' : 'std::unordered_map';
-                reason = `High search volume. Unordered structures provide O(1) lookup.`;
-                ruleTriggered = 'search_ratio > 0.6 AND NOT has_ordering';
-            }
-        } else if (insertRatio > 0.6 && !hasOrdering) {
-            domOp = 'insert';
-            suggestion = 'std::vector';
-            reason = `High insertion rate at back. Vectors offer cache locality and O(1) amortized inserts.`;
-            ruleTriggered = 'insert_ratio > 0.6 AND NOT has_ordering';
-        } else if (deleteRatio > 0.3 && insertRatio > 0.3 && !hasOrdering) {
-            domOp = 'delete';
-            suggestion = 'std::list';
-            reason = 'Mixed inserts and removals detected. List allows O(1) node detachment.';
-            ruleTriggered = 'delete_ratio > 0.3 AND insert_ratio > 0.3';
-        } else if (hasOrdering) {
-            domOp = 'search';
-            suggestion = currentStructure.includes('map') ? 'std::map' : 'std::set';
-            reason = 'Ordering detected, balances tree structure needed.';
-            ruleTriggered = 'has_ordering === true';
+        if (valid.length === 0 || !valid.includes(currentStructure)) {
+            // If the current structure is strictly invalid based on rules and we need to shift:
+            // The existing structure breaks a hard rule.
+            // E.g., they use v[i] but it's a list.
         }
 
-        // Intent-based tiebreaker (Step 8): if no ratio-based rule triggered,
-        // but intent detection found a clear pattern, use it
-        if (!suggestion && intentSignal && intentSignal.intent !== 'none' && intentSignal.suggestedDS) {
-            if (intentSignal.suggestedDS !== currentStructure && intentSignal.strength >= 0.5) {
-                suggestion = intentSignal.suggestedDS;
-                reason = intentSignal.description;
-                ruleTriggered = `intent_detection: ${intentSignal.intent}`;
-                domOp = 'search'; // Intent patterns are generally access-oriented
+        // Run cost model ONLY on valid structures
+        let bestCandidate: string | null = null;
+        let lowestCost = Infinity;
+
+        // Current cost
+        const currentCost = calculateCost(currentStructure, monitor);
+        let domOp: 'search' | 'insert' | 'delete' = searchRatio > 0.6 ? 'search' : (insertRatio > 0.6 ? 'insert' : 'delete');
+
+        // Apply intent tiebreaker to prioritize specific valid options
+        let preferredFromIntent: string | null = null;
+        if (intentSignal && intentSignal.intent !== 'none' && intentSignal.suggestedDS && valid.includes(intentSignal.suggestedDS)) {
+            preferredFromIntent = intentSignal.suggestedDS;
+        }
+
+        for (const ds of valid) {
+            let cost = calculateCost(ds, monitor);
+            // Give a slight bonus (cost reduction) to the preferred intent structure
+            if (ds === preferredFromIntent) {
+                cost *= 0.8; 
             }
+            if (cost < lowestCost && ds !== currentStructure) {
+                lowestCost = cost;
+                bestCandidate = ds;
+            }
+        }
+
+        let suggestion = bestCandidate;
+
+        // Fallback: rule-based legacy override if cost model is ambiguous
+        if (!suggestion) {
+           if (searchRatio > 0.6 && valid.includes('std::unordered_map') && currentStructure.includes('map')) {
+               suggestion = 'std::unordered_map';
+           } else if (insertRatio > 0.6 && valid.includes('std::vector') && !currentStructure.includes('vector')) {
+               suggestion = 'std::vector';
+           } else if (deleteRatio > 0.3 && insertRatio > 0.3 && valid.includes('std::list') && !currentStructure.includes('list')) {
+               suggestion = 'std::list';
+           }
         }
 
         if (suggestion && suggestion !== currentStructure) {
-            const currentCost = calculateCost(currentStructure, monitor);
             const suggestedCost = calculateCost(suggestion, monitor);
 
-            // Allow override if suggested is mathematically strictly faster based on weights
-            if (currentCost > suggestedCost) {
+            if (currentCost > suggestedCost || suggestion === preferredFromIntent) {
                 const speedupRatio = currentCost / Math.max(suggestedCost, 1);
                 const dominantRatio = Math.max(searchRatio, insertRatio, deleteRatio);
                 let { confidence, confidenceLabel } = calculateConfidence(
-                    monitor, hasOrdering, dominantRatio, intentSignal
+                    monitor, valid, dominantRatio, intentSignal
                 );
 
-                // Step 13: Learning Layer confidence boost
                 if (this.learningLayer && suggestion) {
                     const boost = this.learningLayer.getConfidenceBoost(currentStructure, suggestion);
                     if (boost > 0) {
@@ -187,47 +209,90 @@ export class DecisionEngine {
                     }
                 }
 
-                // Step 9: Selective deep validation — extra checks when confidence is low
                 if (confidence < 0.5) {
-                    // Additional heuristic: if total ops is very low, lower confidence further
                     if (totalOperations < 3) {
                         confidence = clamp(confidence - 0.15, 0, 1);
                     }
                     confidenceLabel = confidence >= 0.5 ? 'Moderate' : 'Low';
                 }
 
-                // Intent enrichment: append intent description to reason if present
-                let enrichedReason = reason;
-                if (intentSignal && intentSignal.intent !== 'none') {
-                    enrichedReason += ` | Pattern: ${intentSignal.description}`;
+                let explanation = generateExplanation(suggestion, rejected, monitor, constraints);
+                const simulation = simulateChange(currentStructure, suggestion, monitor);
+                
+                // Step 2 & 5: Semantic Accuracy and Consistency Check
+                explanation = validateExplanation(suggestion, explanation);
+                const consistency = checkConsistency(suggestion, explanation);
+                if (!consistency.isValid) {
+                    confidence = clamp(confidence - consistency.confidencePenalty, 0, 1);
+                    confidenceLabel = confidence >= 0.5 ? 'Moderate' : 'Low';
                 }
 
-                // Step 12: Determine alternative suggestion
-                if (suggestion === 'std::unordered_map') {
-                    alternativeStructure = 'std::map';
-                    alternativeReason = 'If ordering might be needed later (trades O(1) for O(log n) lookups)';
-                } else if (suggestion === 'std::unordered_set') {
-                    alternativeStructure = 'std::set';
-                    alternativeReason = 'If ordering might be needed later (trades O(1) for O(log n) lookups)';
-                } else if (suggestion === 'std::vector') {
-                    alternativeStructure = 'std::deque';
-                    alternativeReason = 'If you anticipate needing efficient push_front() operations later';
+                // Step 4: Developer Insight Engine
+                const insight = generateInsight(monitor, constraints, currentStructure);
+
+                // Step 3: Impact Level
+                let impactLevel: 'high' | 'medium' | 'low' = 'low';
+                if (simulation.speedGain > 3.0 || dominantRatio > 0.8) {
+                    impactLevel = 'high';
+                } else if (simulation.speedGain > 1.5 || dominantRatio > 0.5) {
+                    impactLevel = 'medium';
+                }
+
+                let alternativeStructure: string | null = null;
+                let alternativeReason: string | null = null;
+                let alternativeDetails: { name: string; traits: string[] } | undefined = undefined;
+                
+                // Get the second best valid structure
+                const remainingValid = valid.filter(v => v !== suggestion && v !== currentStructure);
+                if (remainingValid.length > 0) {
+                    let secondBest = remainingValid[0];
+                    let secondLowestCost = Infinity;
+                    for(const v of remainingValid) {
+                        const cost = calculateCost(v, monitor);
+                        if (cost < secondLowestCost) {
+                            secondLowestCost = cost;
+                            secondBest = v;
+                        }
+                    }
+                    if (secondBest) {
+                        alternativeStructure = secondBest;
+                        alternativeReason = 'Second best option based on capability constraints.';
+                        
+                        // Step 7: Alternative Comparison Upgrade
+                        const altSim = simulateChange(currentStructure, secondBest, monitor);
+                        const traits: string[] = [];
+                        if (altSim.speedGain < simulation.speedGain) traits.push('Slightly slower');
+                        if (altSim.memoryImpact === 'Lower' || (altSim.memoryImpact === 'Similar' && simulation.memoryImpact === 'Higher')) traits.push('Better memory footprint');
+                        if (secondBest.includes('map') || secondBest.includes('set') && !secondBest.includes('unordered')) traits.push('Maintains native ordering');
+                        if (traits.length === 0) traits.push('Alternative fallback option');
+
+                        alternativeDetails = {
+                            name: secondBest,
+                            traits
+                        };
+                    }
                 }
 
                 return {
                     suggestedStructure: suggestion,
-                    reason: enrichedReason,
-                    ruleTriggered,
+                    reason: explanation.primaryReason,
+                    ruleTriggered: 'constraint_based_model',
                     currentComplexity: getComplexityString(currentStructure, domOp),
                     suggestedComplexity: getComplexityString(suggestion, domOp),
-                    speedup: speedupRatio > 1.1 ? `${speedupRatio.toFixed(1)}x faster` : 'Marginal gain',
+                    speedup: simulation.speedGain > 1.1 ? `${simulation.speedGain.toFixed(1)}x faster` : 'Marginal gain',
                     expectedImprovement: `${getComplexityString(currentStructure, domOp)} → ${getComplexityString(suggestion, domOp)}`,
                     confidence,
                     confidenceLabel,
                     whyCurrentBad: getWhyCurrentBad(currentStructure, monitor, domOp),
                     whySuggestedBetter: getWhySuggestedBetter(suggestion, domOp),
                     alternativeStructure,
-                    alternativeReason
+                    alternativeReason,
+                    explanation,
+                    simulation,
+                    conflictWarning,
+                    impactLevel,
+                    insight,
+                    alternativeDetails
                 };
             }
         }
