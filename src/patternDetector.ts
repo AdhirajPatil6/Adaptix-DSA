@@ -12,6 +12,7 @@ export interface PatternMatch {
     isTrieCandidate: boolean;
     isSegmentTreeCandidate: boolean;
     isBalancedTreeCandidate: boolean;
+    isSkipListCandidate: boolean;
     detectedPatternLabel: string | null;
 }
 
@@ -26,7 +27,8 @@ export function detectPatterns(varName: string, lines: string[], context: Contex
     let rangeUpdateCount = 0;
     
     let orderedInsertCount = 0;
-    
+    let listSearchCount = 0;
+
     const escapedVar = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     // Regex Definitions
@@ -41,6 +43,8 @@ export function detectPatterns(varName: string, lines: string[], context: Contex
     
     const lowerBoundRegex = new RegExp(`std::lower_bound\\(${escapedVar}\\.begin\\(\\)|${escapedVar}\\.lower_bound\\(`, 'g');
     const insertRegex = new RegExp(`${escapedVar}\\.(insert|push_back|emplace)\\(`, 'g');
+    
+    const listSearchRegex = new RegExp(`std::find\\(${escapedVar}\\.begin\\(\\),?\\s*${escapedVar}\\.end\\(\\)`, 'g');
 
     for (const line of lines) {
         if (line.match(sortRegex)) sortCount++;
@@ -61,6 +65,7 @@ export function detectPatterns(varName: string, lines: string[], context: Contex
 
         if (line.match(lowerBoundRegex)) orderedInsertCount++;
         if (line.match(insertRegex)) orderedInsertCount++;
+        if (line.match(listSearchRegex)) listSearchCount++;
     }
 
     // Evaluation
@@ -68,9 +73,11 @@ export function detectPatterns(varName: string, lines: string[], context: Contex
     const isTrieCandidate = prefixSearchCount >= 1 && stringOpsCount >= 1;
     const isSegmentTreeCandidate = rangeQueryCount >= 1 && rangeUpdateCount >= 1;
     const isBalancedTreeCandidate = context.hasOrdering && orderedInsertCount >= 2;
+    const isSkipListCandidate = context.hasOrdering && listSearchCount >= 1;
 
     let detectedPatternLabel = null;
     if (isSegmentTreeCandidate) detectedPatternLabel = 'Range Query Optimization';
+    else if (isSkipListCandidate) detectedPatternLabel = 'Linked List Fast Search Optimization';
     else if (isTrieCandidate) detectedPatternLabel = 'Prefix String Search';
     else if (isPriorityQueueCandidate) detectedPatternLabel = 'Repeated Extrema Extraction';
     else if (isBalancedTreeCandidate) detectedPatternLabel = 'Ordered Access/Insert';
@@ -80,6 +87,7 @@ export function detectPatterns(varName: string, lines: string[], context: Contex
         isTrieCandidate,
         isSegmentTreeCandidate,
         isBalancedTreeCandidate,
+        isSkipListCandidate,
         detectedPatternLabel
     };
 }

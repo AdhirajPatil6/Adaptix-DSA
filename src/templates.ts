@@ -11,5 +11,10 @@ export const DS_TEMPLATES: Record<string, string> = {
     std::unordered_map<char, TrieNode*> children;
     bool isEnd = false;
 };`,
-    'Segment Tree': `std::vector<int> segTree;`
+    'Segment Tree': `std::vector<int> segTree;`,
+    'Skip List': `struct SkipListNode {
+    int value;
+    std::vector<SkipListNode*> forward;
+    SkipListNode(int val, int level) : value(val), forward(level, nullptr) {}
+};`
 };

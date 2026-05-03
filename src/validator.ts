@@ -63,6 +63,10 @@ export function validateRefactor(context: Context, targetDS: string, aiOutput: S
         if (!aiOutput.new_code.includes('vector') && !aiOutput.new_code.includes('[')) {
             errors.push('Unsafe transformation: AI generated a Segment Tree but lost the array-based storage layer.');
         }
+    } else if (cleanTarget === 'Skip List') {
+        if (!aiOutput.new_code.includes('struct') && !aiOutput.new_code.includes('class')) {
+            errors.push('Unsafe transformation: AI generated a Skip List but no node structure was found.');
+        }
     }
 
     return {

@@ -170,6 +170,9 @@ export class DecisionEngine {
             } else if (patternMatch.isPriorityQueueCandidate && valid.includes('std::priority_queue')) {
                 bestCandidate = 'std::priority_queue';
                 forcedRule = patternMatch.detectedPatternLabel;
+            } else if (patternMatch.isSkipListCandidate && valid.includes('Skip List')) {
+                bestCandidate = 'Skip List';
+                forcedRule = patternMatch.detectedPatternLabel;
             } else if (patternMatch.isBalancedTreeCandidate && valid.includes('std::map')) {
                 bestCandidate = 'std::map';
                 forcedRule = patternMatch.detectedPatternLabel;

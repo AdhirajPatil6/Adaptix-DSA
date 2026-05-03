@@ -76,5 +76,12 @@ export const DS_CAPABILITIES: Record<string, DSCapability> = {
         fastSequential: false,
         fastSearch: true,
         fastInsertDelete: true
+    },
+    'Skip List': {
+        supportsIndex: false,
+        supportsOrdering: true,
+        fastSequential: true,
+        fastSearch: true,
+        fastInsertDelete: true
     }
 };

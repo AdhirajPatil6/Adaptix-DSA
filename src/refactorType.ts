@@ -21,7 +21,7 @@ export function classifyRefactor(context: Context, fromDS: string, toDS: string)
     const toClean = toDS.replace('std::', '');
 
     // Advanced Data Structures ALWAYS require semantic AI rewrite
-    if (['priority_queue', 'Trie', 'Segment Tree'].includes(toClean)) {
+    if (['priority_queue', 'Trie', 'Segment Tree', 'Skip List'].includes(toClean)) {
         return 'semantic';
     }
 

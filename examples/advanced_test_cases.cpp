@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <list>
 #include <algorithm>
 
 using namespace std;
@@ -54,10 +55,26 @@ void testBalancedTree() {
     ordered_data.insert(it, 7);
 }
 
+void testSkipList() {
+    list<int> event_timeline;
+    event_timeline.push_back(100);
+    event_timeline.push_back(200);
+    event_timeline.push_back(300);
+    
+    // Fast searching on a linked list
+    for (int search_val = 150; search_val < 250; search_val += 50) {
+        auto it = std::find(event_timeline.begin(), event_timeline.end(), search_val);
+        if (it != event_timeline.end()) {
+            cout << "Found event: " << *it << "\n";
+        }
+    }
+}
+
 int main() {
     testPriorityQueue();
     testTrie();
     testSegmentTree();
     testBalancedTree();
+    testSkipList();
     return 0;
 }
