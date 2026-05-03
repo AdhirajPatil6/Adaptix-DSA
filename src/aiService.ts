@@ -26,12 +26,14 @@ export interface SemanticRefactorResult {
  * Designed to connect to a local Qwen3 Coder instance via Ollama.
  */
 export async function generateSemanticRefactor(input: SemanticRefactorInput): Promise<SemanticRefactorResult | null> {
-    const prompt = `Transform the given C++ code from one data structure to another while preserving behavior.
+    const prompt = `Transform the given C++ code into using ${input.targetDS}.
 
 Rules:
-- Do not break logic
-- Update all usage patterns (push_back, indexing, iteration)
-- If conversion is unsafe, return warning instead
+- Preserve original logic
+- Replace all operations accordingly
+- Use correct STL or standard implementation
+- If transformation requires redesign (like structs), explain clearly
+- Do not break behavior
 - Output STRICT JSON matching this schema:
 {
   "new_code": "string",
@@ -39,10 +41,9 @@ Rules:
   "warnings": ["string"]
 }
 
-Current Data Structure: ${input.currentDS}
-Target Data Structure: ${input.targetDS}
+Original Data Structure: ${input.currentDS}
 
-Original Code:
+Code:
 \`\`\`cpp
 ${input.code}
 \`\`\`

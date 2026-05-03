@@ -9,6 +9,7 @@ import { validateExplanation } from './validation';
 import { checkConsistency } from './consistency';
 import { generateInsight } from './insight';
 import { logDebug } from './logger';
+import { PatternMatch } from './patternDetector';
 
 export interface DecisionResult {
     suggestedStructure: string | null;
@@ -128,7 +129,8 @@ export class DecisionEngine {
     public determineBestStructure(
         monitor: Monitor,
         constraints: Constraints,
-        intentSignal?: IntentSignal
+        intentSignal?: IntentSignal | null,
+        patternMatch?: PatternMatch | null
     ): DecisionResult {
         const { currentStructure, searchRatio, insertRatio, deleteRatio, totalOperations } = monitor;
 
@@ -155,6 +157,24 @@ export class DecisionEngine {
         // Run cost model ONLY on valid structures
         let bestCandidate: string | null = null;
         let lowestCost = Infinity;
+        let forcedRule: string | null = null;
+
+        // STEP 2.5: Advanced Pattern Override
+        if (patternMatch) {
+            if (patternMatch.isSegmentTreeCandidate && valid.includes('Segment Tree')) {
+                bestCandidate = 'Segment Tree';
+                forcedRule = patternMatch.detectedPatternLabel;
+            } else if (patternMatch.isTrieCandidate && valid.includes('Trie')) {
+                bestCandidate = 'Trie';
+                forcedRule = patternMatch.detectedPatternLabel;
+            } else if (patternMatch.isPriorityQueueCandidate && valid.includes('std::priority_queue')) {
+                bestCandidate = 'std::priority_queue';
+                forcedRule = patternMatch.detectedPatternLabel;
+            } else if (patternMatch.isBalancedTreeCandidate && valid.includes('std::map')) {
+                bestCandidate = 'std::map';
+                forcedRule = patternMatch.detectedPatternLabel;
+            }
+        }
 
         // Current cost
         const currentCost = calculateCost(currentStructure, monitor);
@@ -170,19 +190,22 @@ export class DecisionEngine {
             preferredFromIntent = intentSignal.suggestedDS;
         }
 
-        for (const ds of valid) {
-            let cost = calculateCost(ds, monitor);
-            // Give a slight bonus (cost reduction) to the preferred intent structure
-            if (ds === preferredFromIntent) {
-                cost *= 0.8; 
-            }
-            if (cost < lowestCost && ds !== currentStructure) {
-                lowestCost = cost;
-                bestCandidate = ds;
+        if (!bestCandidate) {
+            for (const ds of valid) {
+                let cost = calculateCost(ds, monitor);
+                // Give a slight bonus (cost reduction) to the preferred intent structure
+                if (ds === preferredFromIntent) {
+                    cost *= 0.8; 
+                }
+                if (cost < lowestCost && ds !== currentStructure) {
+                    lowestCost = cost;
+                    bestCandidate = ds;
+                }
             }
         }
 
         let suggestion = bestCandidate;
+        let rule = forcedRule;
 
         // Fallback: rule-based legacy override if cost model is ambiguous
         if (!suggestion) {
@@ -202,7 +225,7 @@ export class DecisionEngine {
                 const speedupRatio = currentCost / Math.max(suggestedCost, 1);
                 const dominantRatio = Math.max(searchRatio, insertRatio, deleteRatio);
                 let { confidence, confidenceLabel } = calculateConfidence(
-                    monitor, valid, dominantRatio, intentSignal
+                    monitor, valid, dominantRatio, intentSignal || undefined
                 );
 
                 if (this.learningLayer && suggestion) {

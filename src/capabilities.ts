@@ -55,5 +55,26 @@ export const DS_CAPABILITIES: Record<string, DSCapability> = {
         fastSequential: true,
         fastSearch: false,
         fastInsertDelete: true // at both ends
+    },
+    'std::priority_queue': {
+        supportsIndex: false,
+        supportsOrdering: true,
+        fastSequential: false,
+        fastSearch: false,
+        fastInsertDelete: true
+    },
+    'Trie': {
+        supportsIndex: false,
+        supportsOrdering: false,
+        fastSequential: false,
+        fastSearch: true,
+        fastInsertDelete: true
+    },
+    'Segment Tree': {
+        supportsIndex: true,
+        supportsOrdering: false,
+        fastSequential: false,
+        fastSearch: true,
+        fastInsertDelete: true
     }
 };

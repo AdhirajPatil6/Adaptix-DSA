@@ -20,6 +20,11 @@ export function classifyRefactor(context: Context, fromDS: string, toDS: string)
     const fromClean = fromDS.replace('std::', '');
     const toClean = toDS.replace('std::', '');
 
+    // Advanced Data Structures ALWAYS require semantic AI rewrite
+    if (['priority_queue', 'Trie', 'Segment Tree'].includes(toClean)) {
+        return 'semantic';
+    }
+
     // Rule: Semantic
     // vector -> map requires significant API and logic rewrite (e.g., adding keys)
     // any change requiring logic rewrite

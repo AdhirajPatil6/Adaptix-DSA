@@ -49,6 +49,22 @@ export function validateRefactor(context: Context, targetDS: string, aiOutput: S
         errors.push(`Unsafe transformation: Context requires ordering (e.g. sort, lower_bound), but target is unordered.`);
     }
 
+    // Rule 3: Advanced DS Rules
+    if (cleanTarget === 'priority_queue') {
+        if (context.usesIndexAccess) {
+            errors.push('Unsafe transformation: priority_queue does not support random index access, but context requires it.');
+        }
+    } else if (cleanTarget === 'Trie') {
+        if (!aiOutput.new_code.includes('string') && !aiOutput.new_code.includes('char')) {
+            errors.push('Unsafe transformation: AI generated a Trie but no string-based operations were found in the output.');
+        }
+    } else if (cleanTarget === 'Segment Tree') {
+        // Just verify the AI preserved array/vector storage since standard segment trees use flat arrays
+        if (!aiOutput.new_code.includes('vector') && !aiOutput.new_code.includes('[')) {
+            errors.push('Unsafe transformation: AI generated a Segment Tree but lost the array-based storage layer.');
+        }
+    }
+
     return {
         isValid: errors.length === 0,
         errors

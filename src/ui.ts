@@ -116,8 +116,9 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                                  ctx.decision.confidenceLabel === 'Low' ? 'refactor-btn refactor-btn-low' : 'refactor-btn';
 
                 let buttonText = "Apply Refactor";
+                let rType = 'safe';
                 if (ctx.decision.suggestedStructure) {
-                    const rType = classifyRefactor(ctx.context, ctx.monitor.currentStructure, ctx.decision.suggestedStructure);
+                    rType = classifyRefactor(ctx.context, ctx.monitor.currentStructure, ctx.decision.suggestedStructure);
                     if (rType === 'semantic') {
                         buttonText = "Generate Refactor 🤖";
                     } else if (rType === 'adaptive') {
@@ -142,6 +143,14 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                             <div style="background: rgba(59, 130, 246, 0.15); border-left: 3px solid #3b82f6; padding: 6px; margin-bottom: 12px; border-radius: 2px;">
                                 <strong style="color: #3b82f6; font-size: 0.7rem;">💡 Insight</strong>
                                 <p style="margin-top: 2px; color: var(--text-secondary); font-size: 0.65rem;">${ctx.decision.insight}</p>
+                            </div>
+                            ` : ''}
+
+                            ${ctx.decision.ruleTriggered && rType === 'semantic' ? `
+                            <div style="background: rgba(139, 92, 246, 0.15); border-left: 3px solid #8b5cf6; padding: 6px; margin-bottom: 12px; border-radius: 2px;">
+                                <strong style="color: #8b5cf6; font-size: 0.7rem;">🔍 Detected Pattern</strong>
+                                <p style="margin-top: 2px; color: var(--text-secondary); font-size: 0.65rem;">${ctx.decision.ruleTriggered}</p>
+                                <p style="margin-top: 2px; color: #ea580c; font-size: 0.60rem; font-style: italic;">⚠️ Semantic AI transformation required</p>
                             </div>
                             ` : ''}
 

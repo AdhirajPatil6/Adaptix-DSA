@@ -5,12 +5,14 @@ import { LearningLayer } from './learning';
 import { buildConstraints } from './constraints';
 import { Context, createDefaultContext } from './context';
 import { logDebug } from './logger';
+import { detectPatterns, PatternMatch } from './patternDetector';
 
 export interface AnalysisContext {
     monitor: Monitor;
     decision: DecisionResult;
     context: Context;
     intentSignal: IntentSignal;
+    patternMatch?: PatternMatch;
 }
 
 /** Lightweight string hash for cache invalidation (FNV-1a inspired) */
@@ -324,9 +326,12 @@ export class Analyzer {
             // Step 1: Constraint System replaces old safety filter
             const constraints = buildConstraints(context, monitor);
 
-            let decision = this.decisionEngine.determineBestStructure(monitor, constraints, intentSignal);
+            // Step 1.5: Pattern Detection (Advanced DS Heuristics)
+            const patternMatch = detectPatterns(varName, lines, context);
 
-            results.set(varName, { monitor, decision, context, intentSignal });
+            let decision = this.decisionEngine.determineBestStructure(monitor, constraints, intentSignal, patternMatch);
+
+            results.set(varName, { monitor, decision, context, intentSignal, patternMatch });
 
             logDebug('Analyzer', `Variable: ${varName}`, {
                 structure: monitor.currentStructure,
