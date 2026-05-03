@@ -98,7 +98,7 @@ export function detectIntent(
             intent: 'lookup_heavy',
             strength: Math.min(findCount / 6, 1.0),
             description: `Lookup-heavy pattern detected (${findCount} find/count calls on ${varName})`,
-            suggestedDS: 'std::unordered_map'
+            suggestedDS: currentStructure.includes('map') ? 'std::unordered_map' : 'std::unordered_set'
         };
     }
 

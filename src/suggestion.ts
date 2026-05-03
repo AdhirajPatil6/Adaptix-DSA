@@ -39,7 +39,7 @@ export class SuggestionEngine {
                     );
                     diagnostic.source = 'Adaptix';
                     // We can attach custom data for the CodeAction via a custom property or matching by message later
-                    diagnostic.code = `RefactorTo|${context.decision.suggestedStructure}`; // Custom hack for MVP to pass the structure type easily
+                    diagnostic.code = `RefactorTo|${context.decision.suggestedStructure}|${varName}`;
                     diagnostics.push(diagnostic);
                 }
             }

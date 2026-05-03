@@ -8,6 +8,7 @@ import { generateExplanation, ExplanationResult } from './explanation';
 import { validateExplanation } from './validation';
 import { checkConsistency } from './consistency';
 import { generateInsight } from './insight';
+import { logDebug } from './logger';
 
 export interface DecisionResult {
     suggestedStructure: string | null;
@@ -146,10 +147,9 @@ export class DecisionEngine {
         
         emptyResult.conflictWarning = conflictWarning;
 
-        if (valid.length === 0 || !valid.includes(currentStructure)) {
-            // If the current structure is strictly invalid based on rules and we need to shift:
-            // The existing structure breaks a hard rule.
-            // E.g., they use v[i] but it's a list.
+        // If no valid structures remain, return early with conflict warning
+        if (valid.length === 0) {
+            return emptyResult;
         }
 
         // Run cost model ONLY on valid structures
@@ -158,7 +158,11 @@ export class DecisionEngine {
 
         // Current cost
         const currentCost = calculateCost(currentStructure, monitor);
-        let domOp: 'search' | 'insert' | 'delete' = searchRatio > 0.6 ? 'search' : (insertRatio > 0.6 ? 'insert' : 'delete');
+        // Determine truly dominant operation by comparing all three ratios
+        const ratios: [('search' | 'insert' | 'delete'), number][] = [
+            ['search', searchRatio], ['insert', insertRatio], ['delete', deleteRatio]
+        ];
+        const domOp = ratios.reduce((a, b) => b[1] > a[1] ? b : a)[0];
 
         // Apply intent tiebreaker to prioritize specific valid options
         let preferredFromIntent: string | null = null;
@@ -272,6 +276,14 @@ export class DecisionEngine {
                         };
                     }
                 }
+
+                logDebug('Decision', `${currentStructure} → ${suggestion}`, {
+                    domOp,
+                    confidence: confidence.toFixed(2),
+                    confidenceLabel,
+                    impactLevel,
+                    speedup: simulation.speedGain.toFixed(1)
+                });
 
                 return {
                     suggestedStructure: suggestion,

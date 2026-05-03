@@ -3,13 +3,13 @@ import { DecisionEngine, DecisionResult } from './decision';
 import { detectIntent, IntentSignal } from './intent';
 import { LearningLayer } from './learning';
 import { buildConstraints } from './constraints';
+import { Context, createDefaultContext } from './context';
+import { logDebug } from './logger';
 
 export interface AnalysisContext {
     monitor: Monitor;
     decision: DecisionResult;
-    hasOrdering: boolean;
-    usesIndexAccess: boolean;
-    sequentialIteration: boolean;
+    context: Context;
     intentSignal: IntentSignal;
 }
 
@@ -314,17 +314,27 @@ export class Analyzer {
             const hasOrdering = hasOrderingMap.get(varName) || false;
             const usesIndexAccess = usesIndexAccessMap.get(varName) || false;
             const sequentialIteration = sequentialIterationMap.get(varName) || false;
+            
+            // Build a safe, typed context object
+            const context = createDefaultContext({ hasOrdering, usesIndexAccess, sequentialIteration });
+
             // Intent detection (Step 8)
             const intentSignal = detectIntent(varName, lines, monitor.currentStructure);
 
             // Step 1: Constraint System replaces old safety filter
-            const constraints = buildConstraints({
-                hasOrdering, usesIndexAccess, sequentialIteration
-            }, monitor);
+            const constraints = buildConstraints(context, monitor);
 
             let decision = this.decisionEngine.determineBestStructure(monitor, constraints, intentSignal);
 
-            results.set(varName, { monitor, decision, hasOrdering, usesIndexAccess, sequentialIteration, intentSignal });
+            results.set(varName, { monitor, decision, context, intentSignal });
+
+            logDebug('Analyzer', `Variable: ${varName}`, {
+                structure: monitor.currentStructure,
+                ops: { insert: monitor.insertCount, search: monitor.searchCount, delete: monitor.deleteCount },
+                context,
+                suggestion: decision.suggestedStructure,
+                confidence: decision.confidenceLabel
+            });
         }
 
         return results;

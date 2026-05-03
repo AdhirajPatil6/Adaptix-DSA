@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { AnalysisContext } from './analyzer';
+import { classifyRefactor } from './refactorType';
 
 export interface AdaptationRecord {
     from: string;
@@ -72,8 +73,28 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
             </div>`;
         } else {
             let logHtml = '';
+            let cardsHtml = '';
 
             data.forEach((ctx, varName) => {
+              try {
+                // Guard: if decision is missing, render a safe fallback
+                if (!ctx.decision) {
+                    cardsHtml += `
+                    <div class="glass-card animate-in">
+                        <div class="card-header">
+                            <div class="var-info">
+                                <span class="var-name">${varName}</span>
+                                <span class="badge current">${ctx.monitor?.currentStructure?.replace('std::', '') ?? 'Unknown'}</span>
+                            </div>
+                        </div>
+                        <div class="optimal-box">
+                            <div class="optimal-header"><strong>No Suggestion Available</strong></div>
+                            <p style="font-size: 0.8rem; margin:0;">Insufficient data to generate a recommendation.</p>
+                        </div>
+                    </div>`;
+                    return;
+                }
+
                 if (ctx.decision.suggestedStructure) {
                     optimizations++;
                 } else {
@@ -90,7 +111,19 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                     ctx.decision.confidenceLabel === 'Strong' ? 'conf-strong' :
                     ctx.decision.confidenceLabel === 'Moderate' ? 'conf-moderate' : 'conf-low';
                 
-                const btnClass = ctx.decision.confidenceLabel === 'Low' ? 'refactor-btn refactor-btn-low' : 'refactor-btn';
+                const isUnsafe = ctx.decision.confidenceLabel === 'Low' && !!ctx.decision.conflictWarning;
+                const btnClass = isUnsafe ? 'refactor-btn refactor-btn-disabled' : 
+                                 ctx.decision.confidenceLabel === 'Low' ? 'refactor-btn refactor-btn-low' : 'refactor-btn';
+
+                let buttonText = "Apply Refactor";
+                if (ctx.decision.suggestedStructure) {
+                    const rType = classifyRefactor(ctx.context, ctx.monitor.currentStructure, ctx.decision.suggestedStructure);
+                    if (rType === 'semantic') {
+                        buttonText = "Generate Refactor 🤖";
+                    } else if (rType === 'adaptive') {
+                        buttonText = "Apply Refactor ⚠️";
+                    }
+                }
 
                 const impactText = ctx.decision.impactLevel === 'high' ? 'High Impact Optimization' : 
                                    ctx.decision.impactLevel === 'medium' ? 'Medium Impact Optimization' : 'Subtle Optimization';
@@ -143,13 +176,13 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
 
                                     <div style="margin-bottom: 8px;">
                                         <strong style="color: var(--accent-green);">Primary Reason:</strong>
-                                        <p style="margin: 2px 0 0 0; color: var(--text-primary); font-size: 0.7rem;">${ctx.decision.explanation?.primaryReason || ''}</p>
+                                        <p style="margin: 2px 0 0 0; color: var(--text-primary); font-size: 0.7rem;">${ctx.decision.explanation?.primaryReason ?? 'No details available'}</p>
                                     </div>
 
                                     <div style="margin-bottom: 8px;">
                                         <strong style="color: var(--text-primary); font-size: 0.65rem;">Supporting Reasons:</strong>
                                         <ul style="margin: 2px 0 0 0; padding-left: 16px; color: var(--text-secondary); font-size: 0.65rem;">
-                                            ${ctx.decision.explanation?.supportingReasons.map(r => `<li>${r}</li>`).join('') || ''}
+                                            ${ctx.decision.explanation?.supportingReasons?.map(r => `<li>${r}</li>`).join('') ?? ''}
                                         </ul>
                                     </div>
 
@@ -165,15 +198,15 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                                     <div style="margin-bottom: 8px; border-top: 1px dashed var(--glass-border); padding-top: 8px;">
                                         <strong style="color: var(--accent-orange);">Why not others?</strong>
                                         <ul style="margin: 4px 0 0 0; padding-left: 16px; color: var(--text-secondary); font-size: 0.65rem;">
-                                            ${ctx.decision.explanation?.rejectedReasons.map(r => `<li>${r}</li>`).join('') || ''}
+                                            ${ctx.decision.explanation?.rejectedReasons?.map(r => `<li>${r}</li>`).join('') ?? ''}
                                         </ul>
                                     </div>
                                     
                                     <div style="margin-bottom: 4px; border-top: 1px dashed var(--glass-border); padding-top: 8px;">
                                         <strong style="color: var(--text-primary);">What happens if you switch?</strong>
                                         <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px; font-size: 0.65rem; color: var(--text-secondary);">
-                                            <span>⚡️ <strong>Speed:</strong> ${ctx.decision.simulation?.speedGain.toFixed(1) || 1}x multiplier</span>
-                                            <span>💾 <strong>Memory:</strong> ${ctx.decision.simulation?.memoryImpact || 'Similar'} overhead</span>
+                                            <span>⚡️ <strong>Speed:</strong> ${ctx.decision.simulation?.speedGain?.toFixed(1) ?? '1.0'}x multiplier</span>
+                                            <span>💾 <strong>Memory:</strong> ${ctx.decision.simulation?.memoryImpact ?? 'Similar'} overhead</span>
                                             ${ctx.decision.simulation?.featureLoss && ctx.decision.simulation.featureLoss.length > 0 ? 
                                                 `<span style="color: #ea580c;">⚠️ <strong>Losses:</strong> ${ctx.decision.simulation.featureLoss.join(', ')}</span>` : ''}
                                         </div>
@@ -181,7 +214,10 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                                 </div>
                             </details>
 
-                            <button class="${btnClass}" onclick="applyRefactor('${varName}', '${ctx.decision.suggestedStructure}')">Apply Refactor</button>
+                            ${isUnsafe ? 
+                                `<button class="${btnClass}" disabled title="Disabled due to safety constraints">Unsafe to Apply</button>` :
+                                `<button class="${btnClass}" onclick="applyRefactor('${varName}', '${ctx.decision.suggestedStructure}')">${buttonText}</button>`
+                            }
                             
                             ${ctx.decision.alternativeDetails ? `
                             <div class="alternative-box" style="margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.15); border-radius: 6px; border: 1px dashed var(--glass-border);">
@@ -192,7 +228,10 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                                 <ul style="margin: 0 0 8px 0; padding-left: 16px; color: var(--text-secondary); font-size: 0.65rem; font-style: italic;">
                                     ${ctx.decision.alternativeDetails.traits.map(t => `<li>${t}</li>`).join('')}
                                 </ul>
-                                <button class="refactor-btn refactor-btn-alt" style="padding: 4px; font-size: 0.7rem; margin-top: 0;" onclick="applyRefactor('${varName}', '${ctx.decision.alternativeDetails.name}')">Apply Alternative</button>
+                                ${isUnsafe ? 
+                                    `<button class="refactor-btn refactor-btn-disabled" disabled style="padding: 4px; font-size: 0.7rem; margin-top: 0;" title="Disabled due to safety constraints">Unsafe</button>` :
+                                    `<button class="refactor-btn refactor-btn-alt" style="padding: 4px; font-size: 0.7rem; margin-top: 0;" onclick="applyRefactor('${varName}', '${ctx.decision.alternativeDetails.name}')">Apply Alternative</button>`
+                                }
                             </div>
                             ` : ''}
                         </div>
@@ -204,7 +243,7 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                         <p style="font-size: 0.8rem; margin:0;">Current structure is optimal for this workload.</p>
                        </div>`;
 
-                statsHtml += `
+                cardsHtml += `
                     <div class="glass-card animate-in">
                         <div class="card-header">
                             <div class="var-info">
@@ -237,6 +276,21 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                         ${suggestionCard}
                     </div>
                 `;
+              } catch (e) {
+                // Prevent one broken variable from crashing the entire panel
+                cardsHtml += `
+                    <div class="glass-card animate-in">
+                        <div class="card-header">
+                            <div class="var-info">
+                                <span class="var-name">${varName}</span>
+                            </div>
+                        </div>
+                        <div class="optimal-box">
+                            <div class="optimal-header"><strong>Rendering Error</strong></div>
+                            <p style="font-size: 0.8rem; margin:0; color: var(--text-secondary);">Could not render analysis for this variable.</p>
+                        </div>
+                    </div>`;
+              }
             });
 
             history.forEach(rec => {
@@ -272,7 +326,7 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                         <h2>Live Intelligence</h2>
                     </div>
                     <div class="cards-container">
-                        ${statsHtml}
+                        ${cardsHtml}
                     </div>
                 </div>
                 
@@ -395,6 +449,8 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                     .refactor-btn:hover { opacity: 0.8; }
                     .refactor-btn-low { background: linear-gradient(135deg, #64748b, #475569); filter: grayscale(0.5); }
                     .refactor-btn-low:hover { filter: grayscale(0); }
+                    .refactor-btn-disabled { background: rgba(255,255,255,0.05); color: var(--text-secondary); cursor: not-allowed; border: 1px dashed var(--glass-border); }
+                    .refactor-btn-disabled:hover { opacity: 1; }
                     .refactor-btn-alt { background: rgba(255,255,255,0.1); border: 1px solid var(--glass-border); color: var(--text-primary); }
                     .refactor-btn-alt:hover { background: rgba(255,255,255,0.2); opacity: 1; }
 
