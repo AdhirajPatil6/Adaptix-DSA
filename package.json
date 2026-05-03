@@ -2,6 +2,11 @@
   "name": "adaptix",
   "displayName": "Adaptix",
   "description": "Adaptive Data Structure Intelligence Engine",
+  "publisher": "adhirajpatil",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AdhirajPatil6/Adaptix-DSA"
+  },
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.90.0"
