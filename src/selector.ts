@@ -36,6 +36,11 @@ export function evaluateStructures(constraints: Constraints): SelectionResult {
             reasons.push('Requires element ordering (e.g., sort(), lower_bound()), but this structure is unordered.');
         }
 
+        const nonPositionalStructures = ['std::priority_queue', 'Segment Tree', 'Skip List', 'Trie'];
+        if (constraints.needsSequenceEfficiency && (!capabilities.isSequence || nonPositionalStructures.includes(dsName))) {
+            reasons.push('Usage implies a sequence where position or front/back efficiency is key (e.g., erase(begin)), but this structure does not support positional efficiency.');
+        }
+
         if (reasons.length > 0) {
             rejected.push({ name: dsName, reasons });
         } else {

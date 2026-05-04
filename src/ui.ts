@@ -249,9 +249,17 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                        </div>`
                     : `<div class="optimal-box">
                         <div class="optimal-header">
-                            <strong>Peak Performance</strong>
+                            <strong>✅ Optimal — No Changes Needed</strong>
                         </div>
-                        <p style="font-size: 0.8rem; margin:0;">Current structure is optimal for this workload.</p>
+                        <p style="font-size: 0.8rem; margin:0; color: var(--accent-green);">
+                            <code>${ctx.monitor.currentStructure.replace('std::', '')}</code> is already the best structure for this workload.
+                        </p>
+                        <p style="font-size: 0.7rem; margin: 6px 0 0 0; color: var(--text-secondary);">
+                            ${isDomInsert ? 'Insert-dominant pattern — current structure handles insertions efficiently.' :
+                              isDomSearch ? 'Search-dominant pattern — current structure provides optimal lookups.' :
+                              isDomDelete ? 'Delete-dominant pattern — current structure supports efficient removals.' :
+                              'Balanced workload — current structure is well-suited for this mix.'}
+                        </p>
                        </div>`;
 
                 cardsHtml += `

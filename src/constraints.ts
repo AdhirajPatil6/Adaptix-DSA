@@ -5,6 +5,7 @@ export type Constraints = {
     needsIndexAccess: boolean;
     needsOrdering: boolean;
     prefersSequential: boolean;
+    needsSequenceEfficiency: boolean;
 };
 
 /**
@@ -20,7 +21,10 @@ export function buildConstraints(context: Context, monitor: Monitor): Constraint
         needsOrdering: context.hasOrdering,
         
         // If they frequently use range-based for loops or iterator loops
-        prefersSequential: context.sequentialIteration
+        prefersSequential: context.sequentialIteration,
+
+        // If they use front-operations or specific iterator-based erase/insert
+        needsSequenceEfficiency: context.needsSequenceEfficiency
     };
 }
 

@@ -59,9 +59,19 @@ export function validateRefactor(context: Context, targetDS: string, aiOutput: S
             errors.push('Unsafe transformation: AI generated a Trie but no string-based operations were found in the output.');
         }
     } else if (cleanTarget === 'Segment Tree') {
-        // Just verify the AI preserved array/vector storage since standard segment trees use flat arrays
-        if (!aiOutput.new_code.includes('vector') && !aiOutput.new_code.includes('[')) {
+        // Verify the AI produced a proper segment tree with array-based storage
+        // Standard implementations use flat arrays (tree[], seg[], vector<int> tree)
+        const hasArrayStorage = aiOutput.new_code.includes('vector') || 
+                                aiOutput.new_code.includes('[') ||
+                                aiOutput.new_code.includes('array');
+        const hasSegTreeOps = aiOutput.new_code.includes('build') || 
+                              aiOutput.new_code.includes('update') || 
+                              aiOutput.new_code.includes('query');
+        if (!hasArrayStorage) {
             errors.push('Unsafe transformation: AI generated a Segment Tree but lost the array-based storage layer.');
+        }
+        if (!hasSegTreeOps) {
+            errors.push('Unsafe transformation: AI generated a Segment Tree but missing core operations (build/update/query).');
         }
     } else if (cleanTarget === 'Skip List') {
         if (!aiOutput.new_code.includes('struct') && !aiOutput.new_code.includes('class')) {

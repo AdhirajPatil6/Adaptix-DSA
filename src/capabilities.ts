@@ -4,6 +4,8 @@ export interface DSCapability {
     fastSequential: boolean;
     fastSearch: boolean;
     fastInsertDelete: boolean;
+    isSequence: boolean;
+    isStringOnly: boolean;
 }
 
 export const DS_CAPABILITIES: Record<string, DSCapability> = {
@@ -12,76 +14,98 @@ export const DS_CAPABILITIES: Record<string, DSCapability> = {
         supportsOrdering: true,
         fastSequential: true,
         fastSearch: false,
-        fastInsertDelete: false // except at the back
+        fastInsertDelete: false,
+        isSequence: true,
+        isStringOnly: false
     },
     'std::list': {
         supportsIndex: false,
         supportsOrdering: true,
-        fastSequential: false, // terrible cache locality
+        fastSequential: false,
         fastSearch: false,
-        fastInsertDelete: true
+        fastInsertDelete: true,
+        isSequence: true,
+        isStringOnly: false
     },
     'std::map': {
-        supportsIndex: false, // it has operator[] but it's not a sequential index
+        supportsIndex: false,
         supportsOrdering: true,
         fastSequential: true,
-        fastSearch: true, // O(log n) is fast enough
-        fastInsertDelete: false
+        fastSearch: true,
+        fastInsertDelete: false,
+        isSequence: false,
+        isStringOnly: false
     },
     'std::unordered_map': {
         supportsIndex: false,
         supportsOrdering: false,
         fastSequential: false,
-        fastSearch: true, // O(1)
-        fastInsertDelete: false
+        fastSearch: true,
+        fastInsertDelete: false,
+        isSequence: false,
+        isStringOnly: false
     },
     'std::set': {
         supportsIndex: false,
         supportsOrdering: true,
         fastSequential: true,
         fastSearch: true,
-        fastInsertDelete: false
+        fastInsertDelete: false,
+        isSequence: false,
+        isStringOnly: false
     },
     'std::unordered_set': {
         supportsIndex: false,
         supportsOrdering: false,
         fastSequential: false,
         fastSearch: true,
-        fastInsertDelete: false
+        fastInsertDelete: false,
+        isSequence: false,
+        isStringOnly: false
     },
     'std::deque': {
         supportsIndex: true,
         supportsOrdering: true,
         fastSequential: true,
         fastSearch: false,
-        fastInsertDelete: true // at both ends
+        fastInsertDelete: true,
+        isSequence: true,
+        isStringOnly: false
     },
     'std::priority_queue': {
         supportsIndex: false,
         supportsOrdering: true,
         fastSequential: false,
         fastSearch: false,
-        fastInsertDelete: true
+        fastInsertDelete: true,
+        isSequence: true,
+        isStringOnly: false
     },
     'Trie': {
         supportsIndex: false,
         supportsOrdering: false,
         fastSequential: false,
         fastSearch: true,
-        fastInsertDelete: true
+        fastInsertDelete: true,
+        isSequence: true,
+        isStringOnly: true
     },
     'Segment Tree': {
         supportsIndex: true,
         supportsOrdering: false,
         fastSequential: false,
         fastSearch: true,
-        fastInsertDelete: true
+        fastInsertDelete: true,
+        isSequence: true,
+        isStringOnly: false
     },
     'Skip List': {
         supportsIndex: false,
         supportsOrdering: true,
         fastSequential: true,
         fastSearch: true,
-        fastInsertDelete: true
+        fastInsertDelete: true,
+        isSequence: true,
+        isStringOnly: false
     }
 };

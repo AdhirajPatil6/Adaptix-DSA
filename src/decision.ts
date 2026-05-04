@@ -10,6 +10,7 @@ import { checkConsistency } from './consistency';
 import { generateInsight } from './insight';
 import { logDebug } from './logger';
 import { PatternMatch } from './patternDetector';
+import { DS_CAPABILITIES } from './capabilities';
 
 // ────────────────────────────────────────────────────────────────
 // Priority Queue (Min-Heap) — used for ranking data structure
@@ -128,8 +129,13 @@ export function getComplexityWeight(ds: string, operation: 'search' | 'insert' |
     }
     if (ds === 'std::map' || ds === 'std::set') { return 5; } // O(log n)
     if (ds === 'std::unordered_map' || ds === 'std::unordered_set') {
-        // O(1) amortized, but add collision penalty
-        return operation === 'search' ? 1.5 : 1;
+        // O(1) amortized, but with significant constant-factor overhead:
+        // - Hash computation per operation
+        // - Dynamic node allocation (not cache-friendly)
+        // - Periodic rehashing on insert
+        if (operation === 'search') { return 1.5; }  // O(1) lookup + hash cost
+        if (operation === 'insert') { return 3; }    // O(1) amortized + hash + alloc + rehash risk
+        return 3;                                     // O(1) delete + hash + dealloc
     }
     if (ds === 'std::priority_queue') {
         if (operation === 'insert') { return 5; } // O(log n)
@@ -137,13 +143,18 @@ export function getComplexityWeight(ds: string, operation: 'search' | 'insert' |
         return 5; // O(log n) pop
     }
     if (ds === 'Trie') {
-        return operation === 'search' ? 3 : 3; // O(K) where K is string length
+        return operation === 'search' ? 50 : 50; // High base cost to avoid accidental suggestions for non-string types
     }
     if (ds === 'Segment Tree') {
-        return 5; // O(log n) for range queries and updates
+        // O(log n) per op, but with very high constant factors:
+        // - 4N memory overhead for flat array representation
+        // - Complex update propagation (lazy propagation)
+        // - Only wins when range-query pattern is explicitly detected
+        return 25;
     }
     if (ds === 'Skip List') {
-        return 5; // O(log n) search/insert
+        // O(log n) expected, but probabilistic with cache-miss overhead
+        return 15;
     }
     return 10;
 }
@@ -343,20 +354,42 @@ export class DecisionEngine {
             const candidateHeap = new MinHeap();
 
             for (const ds of valid) {
-                if (ds === currentStructure) continue;
                 let cost = calculateCost(ds, monitor, optProfile);
+                
+                // Give a strong bonus (cost reduction) to the current structure
+                // to avoid suggesting changes for marginal performance gains.
+                if (ds === currentStructure) {
+                    cost *= 0.4; 
+                }
+
+                // If we are moving from a sequence to an associative structure
+                // but the workload is insert-heavy, add extra penalty to the switch
+                const isCurrentSeq = DS_CAPABILITIES[currentStructure]?.isSequence;
+                const isNewAssoc = !DS_CAPABILITIES[ds]?.isSequence;
+                if (isCurrentSeq && isNewAssoc && monitor.insertRatio > 0.7) {
+                    if (ds !== currentStructure) cost *= 2.0; // Stronger penalty for switching away from efficient sequences
+                }
+                
                 // Give a slight bonus (cost reduction) to the preferred intent structure
                 if (ds === preferredFromIntent) {
-                    cost *= 0.8;
+                    cost *= 0.85;
                 }
                 candidateHeap.push({ name: ds, score: cost });
             }
 
             // Extract the best candidate from the heap — O(log n)
             const best = candidateHeap.pop();
-            if (best) {
+            if (best && best.name !== currentStructure) {
                 bestCandidate = best.name;
                 lowestCost = best.score;
+
+                // Semantic Refinement: If suggesting an unordered structure to replace a sequence,
+                // prefer unordered_set over unordered_map unless intent specifically asked for a map.
+                if (bestCandidate === 'std::unordered_map' && !currentStructure.includes('map') && preferredFromIntent !== 'std::unordered_map') {
+                    if (valid.includes('std::unordered_set')) {
+                        bestCandidate = 'std::unordered_set';
+                    }
+                }
             }
         }
 
@@ -364,21 +397,41 @@ export class DecisionEngine {
         let rule = forcedRule;
 
         // Fallback: rule-based legacy override if cost model is ambiguous
+        // IMPORTANT: Only apply if the suggested structure has a meaningfully lower
+        // raw cost than the current structure (at least 1.3x improvement).
         if (!suggestion) {
-           if (searchRatio > 0.6 && valid.includes('std::unordered_map') && currentStructure.includes('map')) {
+           if (searchRatio > 0.6 && valid.includes('std::unordered_map') && currentStructure.includes('map')
+               && !currentStructure.includes('unordered_map')) {
                suggestion = 'std::unordered_map';
+           } else if (searchRatio > 0.6 && valid.includes('std::unordered_set') && !currentStructure.includes('unordered')) {
+               // Only suggest if current isn't already a hash structure
+               suggestion = 'std::unordered_set';
            } else if (insertRatio > 0.6 && valid.includes('std::vector') && !currentStructure.includes('vector')) {
                suggestion = 'std::vector';
            } else if (deleteRatio > 0.3 && insertRatio > 0.3 && valid.includes('std::list') && !currentStructure.includes('list')) {
                suggestion = 'std::list';
+           }
+
+           // Gate: verify fallback suggestion is meaningfully better
+           if (suggestion && suggestion !== currentStructure) {
+               const fallbackCost = calculateCost(suggestion, monitor, optProfile);
+               const rawCurrentCost = calculateCost(currentStructure, monitor, optProfile);
+               if (rawCurrentCost <= fallbackCost * 1.3) {
+                   // Current is already close to or better than the suggestion — stay optimal
+                   suggestion = null;
+               }
            }
         }
 
         if (suggestion && suggestion !== currentStructure) {
             const suggestedCost = calculateCost(suggestion, monitor, optProfile);
 
-            if (currentCost > suggestedCost || suggestion === preferredFromIntent) {
-                const speedupRatio = currentCost / Math.max(suggestedCost, 1);
+            // Only suggest if there's a meaningful improvement (at least 1.3x speedup)
+            const rawCurrentCost = calculateCost(currentStructure, monitor, optProfile);
+            const rawSpeedup = rawCurrentCost / Math.max(suggestedCost, 1);
+
+            if (rawSpeedup > 1.3 && (currentCost > suggestedCost || suggestion === preferredFromIntent)) {
+                const speedupRatio = rawCurrentCost / Math.max(suggestedCost, 1);
                 const dominantRatio = Math.max(searchRatio, insertRatio, deleteRatio);
                 let { confidence, confidenceLabel } = calculateConfidence(
                     monitor, valid, dominantRatio, intentSignal || undefined

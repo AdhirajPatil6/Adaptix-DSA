@@ -233,9 +233,14 @@ export class Analyzer {
         const rangeForRegex = /for\s*\(.*:\s*(\w+)\s*\)/g;
         const iterForRegex = /for\s*\(.*\b(\w+)\.begin\s*\(/g;
 
-        // Loop depth tracking — estimates iteration multiplier
-        // Each nested loop multiplies the operation count to reflect runtime frequency
-        const LOOP_ITERATION_ESTIMATE = 100; // conservative estimate for unknown N
+        // ────────────────────────────────────────────────────────────────
+        // Loop bound extraction — proportional weight system
+        // Instead of a flat constant, we parse actual loop bounds from
+        // the source code (e.g., `n*4` → 4.0, `n/10` → 0.1) to produce
+        // accurate operation ratios for different workload patterns.
+        // All bounds are normalized relative to 'n' (treated as 1.0).
+        // ────────────────────────────────────────────────────────────────
+        const BASE_WEIGHT = 100; // base weight for a standard loop (bound = n)
         const loopStartRegex = /^\s*(for|while)\s*\(/;
         const openBraceRegex = /\{/g;
         const closeBraceRegex = /\}/g;
@@ -244,12 +249,75 @@ export class Analyzer {
         const hasOrderingMap = new Map<string, boolean>();
         const usesIndexAccessMap = new Map<string, boolean>();
         const sequentialIterationMap = new Map<string, boolean>();
+        const needsSequenceEfficiencyMap = new Map<string, boolean>();
 
-        // Pre-pass: compute loop depth for each line
+        // Pre-pass 0: Scan for variable assignments to resolve indirect bounds
+        // e.g., `int searchCount = n / 5;` → boundVars['searchCount'] = 0.2
+        //        `int deleteCount = n / 2;` → boundVars['deleteCount'] = 0.5
+        const boundVars = new Map<string, number>();
+        const varAssignRegex = /(?:int|long|size_t|auto)\s+(\w+)\s*=\s*([^;]+);/g;
+        for (const line of lines) {
+            let assignMatch;
+            while ((assignMatch = varAssignRegex.exec(line)) !== null) {
+                const varName = assignMatch[1];
+                const expr = assignMatch[2].trim();
+                const multiplier = this._parseExpression(expr);
+                if (multiplier !== null) {
+                    boundVars.set(varName, multiplier);
+                }
+            }
+        }
+
+        /**
+         * Extract relative multiplier from a for-loop header.
+         * Returns a multiplier relative to 'n' (the primary size variable).
+         * Examples:
+         *   for(int i = 0; i < n; i++)        → 1.0
+         *   for(int i = 0; i < n * 4; i++)    → 4.0
+         *   for(int i = 0; i < searchCount; ) → lookup searchCount in boundVars
+         *   for(int i = 0; i < (int)data.size(); i++) → 1.0 (container size ≈ n)
+         *   while(...) or unknown              → 1.0 (safe fallback)
+         */
+        const parseLoopBound = (line: string): number => {
+            // Match for-loop condition: `i < EXPR` or `i <= EXPR`
+            const forCondMatch = line.match(/for\s*\([^;]*;\s*\w+\s*<=?\s*([^;]+?)\s*;/);
+            if (!forCondMatch) {
+                return 1.0; // while loop or unrecognized → default
+            }
+            const boundExpr = forCondMatch[1].trim();
+            
+            // Strip casts like (int) or (size_t)
+            const cleaned = boundExpr.replace(/\(\s*(?:int|size_t|long|unsigned)\s*\)/g, '').trim();
+            
+            // Container .size() → treat as ≈ n
+            if (cleaned.match(/\w+\.size\(\)/)) {
+                return 1.0;
+            }
+
+            // Try to parse the expression as a multiplier of n
+            const multiplier = this._parseExpression(cleaned);
+            if (multiplier !== null) {
+                return multiplier;
+            }
+
+            // Check if it's a known variable
+            if (boundVars.has(cleaned)) {
+                return boundVars.get(cleaned)!;
+            }
+
+            // Unknown variable that's not 'n' → heuristic: treat as 1.0
+            return 1.0;
+        };
+
+        // Pre-pass 1: compute per-line cumulative loop multiplier AND depth
+        // Instead of flat depth, we track the PRODUCT of all enclosing loop bounds
+        // AND the loop depth (to know if we're inside any loop at all)
+        const lineLoopMultipliers: number[] = new Array(lines.length).fill(0);
         const lineLoopDepths: number[] = new Array(lines.length).fill(0);
+        let currentMultiplier = 1.0;
         let currentLoopDepth = 0;
-        // Track brace depth changes correlated with loops
-        const loopBraceStack: boolean[] = []; // true if this brace level is a loop
+        // Stack of (isLoop, loopMultiplier) for each brace level
+        const loopBraceStack: { isLoop: boolean; multiplier: number }[] = [];
         
         for (let i = 0; i < lines.length; i++) {
             const trimmed = lines[i].trim();
@@ -264,21 +332,28 @@ export class Analyzer {
             // Process opening braces
             for (let b = 0; b < opens; b++) {
                 if (isLoopStart && b === 0) {
-                    loopBraceStack.push(true);
+                    const loopMult = parseLoopBound(trimmed);
+                    loopBraceStack.push({ isLoop: true, multiplier: loopMult });
+                    currentMultiplier *= loopMult;
                     currentLoopDepth++;
                 } else {
-                    loopBraceStack.push(false);
+                    loopBraceStack.push({ isLoop: false, multiplier: 1.0 });
                 }
             }
             
-            // Set depth for this line (after opens, before closes)
+            // Set multiplier and depth for this line (after opens, before closes)
+            lineLoopMultipliers[i] = currentMultiplier;
             lineLoopDepths[i] = currentLoopDepth;
             
             // Process closing braces
             for (let b = 0; b < closes; b++) {
                 if (loopBraceStack.length > 0) {
-                    const wasLoop = loopBraceStack.pop();
-                    if (wasLoop) {
+                    const entry = loopBraceStack.pop()!;
+                    if (entry.isLoop) {
+                        // Safely restore multiplier (avoid division by zero)
+                        if (entry.multiplier > 0) {
+                            currentMultiplier /= entry.multiplier;
+                        }
                         currentLoopDepth = Math.max(0, currentLoopDepth - 1);
                     }
                 }
@@ -287,9 +362,12 @@ export class Analyzer {
 
         for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
             const line = lines[lineIdx];
-            // Calculate operation weight based on loop nesting
+            // Calculate operation weight based on proportional loop bounds
+            // If inside any loop, apply BASE_WEIGHT scaled by the cumulative multiplier
+            // If outside all loops, weight = 1 (single execution)
             const loopDepth = lineLoopDepths[lineIdx];
-            const weight = loopDepth > 0 ? LOOP_ITERATION_ESTIMATE * loopDepth : 1;
+            const multiplier = lineLoopMultipliers[lineIdx];
+            const weight = loopDepth > 0 ? Math.max(1, Math.round(BASE_WEIGHT * multiplier)) : 1;
 
             // Track which vars had index ops counted on this line (dedup for anyIndexRegex)
             const countedVarsOnLine = new Set<string>();
@@ -311,16 +389,25 @@ export class Analyzer {
                     } else if (['sort', 'lower_bound', 'upper_bound'].includes(op)) {
                         hasOrderingMap.set(varName, true);
                     }
+
+                    // Sequence efficiency detection
+                    if (['push_front', 'pop_front'].includes(op)) {
+                        needsSequenceEfficiencyMap.set(varName, true);
+                    }
+                    if (['erase', 'insert'].includes(op) && line.includes('.begin()')) {
+                        needsSequenceEfficiencyMap.set(varName, true);
+                    }
                 }
             }
 
-            // Index based insert/update/access
+            // Index based insert/update/access — TRUE random access requirement
             let idxMatch;
             while ((idxMatch = indexRegex.exec(line)) !== null) {
                 const varName = idxMatch[1];
                 const monitor = this.variables.get(varName);
                 if (monitor) {
                     countedVarsOnLine.add(varName);
+                    usesIndexAccessMap.set(varName, true); // write-index is a hard requirement
                     if (monitor.currentStructure.includes('map')) {
                         monitor.recordInsertBulk(weight);
                     } else {
@@ -335,6 +422,7 @@ export class Analyzer {
                 const monitor = this.variables.get(varName);
                 if (monitor) {
                     countedVarsOnLine.add(varName);
+                    usesIndexAccessMap.set(varName, true); // read-index is a hard requirement
                     monitor.recordSearchBulk(weight);
                 }
             }
@@ -354,18 +442,22 @@ export class Analyzer {
                         if (op !== 'sort') {
                             monitor.recordSearchBulk(weight);
                         }
+                    } else if (op === 'reverse') {
+                        needsSequenceEfficiencyMap.set(varName, true);
                     }
                 }
             }
 
-            // Context flag + general index access search counting
-            // This catches data[j] in ANY context (comparisons, function args, etc.)
-            // that wasn't already counted by indexRegex or readIndexRegex
+            // General index access search counting
+            // This catches data[j] in comparison/scan context (e.g., if(data[j] == target))
+            // that wasn't already counted by write-index or read-index regex.
+            // NOTE: This does NOT set usesIndexAccessMap because linear scan
+            // patterns (data[j] in a loop comparison) don't require true random access —
+            // the scan could be replaced with find() or a hash lookup.
             let anyIdxMatch;
             while ((anyIdxMatch = anyIndexRegex.exec(line)) !== null) {
                 const varName = anyIdxMatch[1];
                 if (this.variables.has(varName)) {
-                    usesIndexAccessMap.set(varName, true);
                     // Count as search if not already counted by write-index regex on this line
                     if (!countedVarsOnLine.has(varName)) {
                         const monitor = this.variables.get(varName);
@@ -402,9 +494,10 @@ export class Analyzer {
             const hasOrdering = hasOrderingMap.get(varName) || false;
             const usesIndexAccess = usesIndexAccessMap.get(varName) || false;
             const sequentialIteration = sequentialIterationMap.get(varName) || false;
+            const needsSequenceEfficiency = needsSequenceEfficiencyMap.get(varName) || false;
             
             // Build a safe, typed context object
-            const context = createDefaultContext({ hasOrdering, usesIndexAccess, sequentialIteration });
+            const context = createDefaultContext({ hasOrdering, usesIndexAccess, sequentialIteration, needsSequenceEfficiency });
 
             // Intent detection (Step 8)
             const intentSignal = detectIntent(varName, lines, monitor.currentStructure);
@@ -438,5 +531,50 @@ export class Analyzer {
         }
 
         return results;
+    }
+
+    /**
+     * Parse a numeric expression that may involve 'n' (the primary size variable).
+     * Returns a relative multiplier where n = 1.0.
+     * 
+     * Supported patterns:
+     *   'n'           → 1.0
+     *   'n * 4'       → 4.0
+     *   '4 * n'       → 4.0
+     *   'n / 10'      → 0.1
+     *   'n / 5'       → 0.2
+     *   'n - 1'       → 1.0 (close enough)
+     *   '100'         → null (pure constant, not relative to n)
+     *   'someVar'     → null (unknown)
+     */
+    private _parseExpression(expr: string): number | null {
+        const cleaned = expr.trim();
+
+        // Exact 'n'
+        if (cleaned === 'n') {
+            return 1.0;
+        }
+
+        // n * K or K * n
+        const mulMatch = cleaned.match(/^n\s*\*\s*(\d+(?:\.\d+)?)$/) ||
+                          cleaned.match(/^(\d+(?:\.\d+)?)\s*\*\s*n$/);
+        if (mulMatch) {
+            return parseFloat(mulMatch[1]);
+        }
+
+        // n / K
+        const divMatch = cleaned.match(/^n\s*\/\s*(\d+(?:\.\d+)?)$/);
+        if (divMatch) {
+            const divisor = parseFloat(divMatch[1]);
+            return divisor > 0 ? 1.0 / divisor : 1.0;
+        }
+
+        // n + K or n - K → treat as ≈ n (close enough for large n)
+        const addSubMatch = cleaned.match(/^n\s*[+\-]\s*\d+$/);
+        if (addSubMatch) {
+            return 1.0;
+        }
+
+        return null;
     }
 }

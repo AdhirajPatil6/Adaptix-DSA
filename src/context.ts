@@ -12,6 +12,8 @@ export interface Context {
     hasOrdering: boolean;
     /** Code uses sequential iteration: range-for or iterator loops */
     sequentialIteration: boolean;
+    /** Code uses positional operations: push_front, erase(begin), etc. */
+    needsSequenceEfficiency: boolean;
 }
 
 /**
@@ -23,6 +25,7 @@ export function createDefaultContext(overrides?: Partial<Context>): Context {
         usesIndexAccess: false,
         hasOrdering: false,
         sequentialIteration: false,
+        needsSequenceEfficiency: false,
         ...overrides,
     };
 }
