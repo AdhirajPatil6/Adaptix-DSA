@@ -224,8 +224,8 @@ export class Analyzer {
 
         // 2. Detect operations per line to get context
         const memberOpRegex = /\b(\w+)\.(push_back|push_front|insert|emplace|emplace_back|find|erase|pop_back|pop_front|sort|lower_bound|upper_bound|at|operator\[\])\b/g;
-        const indexRegex = /\b(\w+)\[.*\]\s*=/g;
-        const readIndexRegex = /=\s*(\w+)\[.*\]/g;
+        const indexRegex = /\b(\w+)\[.*\]\s*=(?!=)/g;
+        const readIndexRegex = /(?<!=)=\s*(\w+)\[.*\]/g;
         const algoRegex = /(?:std::)?(find|sort|binary_search|lower_bound|upper_bound|reverse)\(\s*(\w+)\.begin\(\)/g;
 
         // Context flag regexes
@@ -233,12 +233,67 @@ export class Analyzer {
         const rangeForRegex = /for\s*\(.*:\s*(\w+)\s*\)/g;
         const iterForRegex = /for\s*\(.*\b(\w+)\.begin\s*\(/g;
 
+        // Loop depth tracking — estimates iteration multiplier
+        // Each nested loop multiplies the operation count to reflect runtime frequency
+        const LOOP_ITERATION_ESTIMATE = 100; // conservative estimate for unknown N
+        const loopStartRegex = /^\s*(for|while)\s*\(/;
+        const openBraceRegex = /\{/g;
+        const closeBraceRegex = /\}/g;
+
         // Context flag maps
         const hasOrderingMap = new Map<string, boolean>();
         const usesIndexAccessMap = new Map<string, boolean>();
         const sequentialIterationMap = new Map<string, boolean>();
 
-        for (const line of lines) {
+        // Pre-pass: compute loop depth for each line
+        const lineLoopDepths: number[] = new Array(lines.length).fill(0);
+        let currentLoopDepth = 0;
+        // Track brace depth changes correlated with loops
+        const loopBraceStack: boolean[] = []; // true if this brace level is a loop
+        
+        for (let i = 0; i < lines.length; i++) {
+            const trimmed = lines[i].trim();
+            
+            // Check if this line starts a loop
+            const isLoopStart = loopStartRegex.test(trimmed);
+            
+            // Count braces on this line
+            const opens = (trimmed.match(openBraceRegex) || []).length;
+            const closes = (trimmed.match(closeBraceRegex) || []).length;
+            
+            // Process opening braces
+            for (let b = 0; b < opens; b++) {
+                if (isLoopStart && b === 0) {
+                    loopBraceStack.push(true);
+                    currentLoopDepth++;
+                } else {
+                    loopBraceStack.push(false);
+                }
+            }
+            
+            // Set depth for this line (after opens, before closes)
+            lineLoopDepths[i] = currentLoopDepth;
+            
+            // Process closing braces
+            for (let b = 0; b < closes; b++) {
+                if (loopBraceStack.length > 0) {
+                    const wasLoop = loopBraceStack.pop();
+                    if (wasLoop) {
+                        currentLoopDepth = Math.max(0, currentLoopDepth - 1);
+                    }
+                }
+            }
+        }
+
+        for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+            const line = lines[lineIdx];
+            // Calculate operation weight based on loop nesting
+            const loopDepth = lineLoopDepths[lineIdx];
+            const weight = loopDepth > 0 ? LOOP_ITERATION_ESTIMATE * loopDepth : 1;
+
+            // Track which vars had index ops counted on this line (dedup for anyIndexRegex)
+            const countedVarsOnLine = new Set<string>();
+
             // Member operations
             let opMatch;
             while ((opMatch = memberOpRegex.exec(line)) !== null) {
@@ -248,11 +303,11 @@ export class Analyzer {
 
                 if (monitor) {
                     if (['push_back', 'push_front', 'insert', 'emplace', 'emplace_back'].includes(op)) {
-                        monitor.recordInsert();
+                        monitor.recordInsertBulk(weight);
                     } else if (['find', 'at', 'operator[]'].includes(op)) {
-                        monitor.recordSearch();
+                        monitor.recordSearchBulk(weight);
                     } else if (['erase', 'pop_back', 'pop_front'].includes(op)) {
-                        monitor.recordDelete();
+                        monitor.recordDeleteBulk(weight);
                     } else if (['sort', 'lower_bound', 'upper_bound'].includes(op)) {
                         hasOrderingMap.set(varName, true);
                     }
@@ -265,10 +320,11 @@ export class Analyzer {
                 const varName = idxMatch[1];
                 const monitor = this.variables.get(varName);
                 if (monitor) {
+                    countedVarsOnLine.add(varName);
                     if (monitor.currentStructure.includes('map')) {
-                        monitor.recordInsert(); // mp[key] = val is a potential insert (creates entry)
+                        monitor.recordInsertBulk(weight);
                     } else {
-                        monitor.recordSearch(); // v[i] = x is index ACCESS, not structural insert
+                        monitor.recordSearchBulk(weight);
                     }
                 }
             }
@@ -278,7 +334,8 @@ export class Analyzer {
                 const varName = readIdxMatch[1];
                 const monitor = this.variables.get(varName);
                 if (monitor) {
-                    monitor.recordSearch();
+                    countedVarsOnLine.add(varName);
+                    monitor.recordSearchBulk(weight);
                 }
             }
 
@@ -291,22 +348,31 @@ export class Analyzer {
 
                 if (monitor) {
                     if (['find', 'binary_search'].includes(op)) {
-                        monitor.recordSearch();
+                        monitor.recordSearchBulk(weight);
                     } else if (['sort', 'lower_bound', 'upper_bound'].includes(op)) {
                         hasOrderingMap.set(varName, true);
                         if (op !== 'sort') {
-                            monitor.recordSearch();
+                            monitor.recordSearchBulk(weight);
                         }
                     }
                 }
             }
 
-            // Context flag: index access (v[i] for any purpose)
+            // Context flag + general index access search counting
+            // This catches data[j] in ANY context (comparisons, function args, etc.)
+            // that wasn't already counted by indexRegex or readIndexRegex
             let anyIdxMatch;
             while ((anyIdxMatch = anyIndexRegex.exec(line)) !== null) {
                 const varName = anyIdxMatch[1];
                 if (this.variables.has(varName)) {
                     usesIndexAccessMap.set(varName, true);
+                    // Count as search if not already counted by write-index regex on this line
+                    if (!countedVarsOnLine.has(varName)) {
+                        const monitor = this.variables.get(varName);
+                        if (monitor) {
+                            monitor.recordSearchBulk(weight);
+                        }
+                    }
                 }
             }
 

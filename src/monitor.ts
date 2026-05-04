@@ -111,6 +111,25 @@ export class Monitor {
         this._costTreeDirty = true;
     }
 
+    /** Bulk record — used when loop-depth multiplier is applied */
+    public recordInsertBulk(count: number) {
+        this.insertCount += count;
+        this.totalOperations += count;
+        this._costTreeDirty = true;
+    }
+
+    public recordSearchBulk(count: number) {
+        this.searchCount += count;
+        this.totalOperations += count;
+        this._costTreeDirty = true;
+    }
+
+    public recordDeleteBulk(count: number) {
+        this.deleteCount += count;
+        this.totalOperations += count;
+        this._costTreeDirty = true;
+    }
+
     public get insertRatio(): number {
         return this.totalOperations > 0 ? this.insertCount / this.totalOperations : 0;
     }
