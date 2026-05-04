@@ -26,20 +26,44 @@ export interface SemanticRefactorResult {
  * Designed to connect to a local Qwen3 Coder instance via Ollama.
  */
 export async function generateSemanticRefactor(input: SemanticRefactorInput): Promise<SemanticRefactorResult | null> {
-    const prompt = `Transform the given C++ code into using ${input.targetDS}.
+    // Build target-specific guidance to prevent AI hallucination
+    let dsGuidance = '';
+    const target = input.targetDS;
+    if (target === 'std::unordered_set' || target === 'std::unordered_map') {
+        dsGuidance = `Use std::${target.replace('std::', '')} from <${target.replace('std::', '')}>.
+Replace linear search (std::find, for-loop search) with .find() method.
+Replace push_back/insert with .insert(). This is a SIMPLE container swap — do NOT create custom structs.`;
+    } else if (target === 'std::set' || target === 'std::map') {
+        dsGuidance = `Use std::${target.replace('std::', '')} from <${target.replace('std::', '')}>.
+Replace linear search with .find()/.count(). Replace push_back with .insert(). SIMPLE container swap.`;
+    } else if (target === 'std::deque') {
+        dsGuidance = `Use std::deque from <deque>. This is a near drop-in replacement for std::vector.
+Replace <vector> with <deque>. Keep all method calls identical (push_back, [], .begin(), .end() all work).`;
+    } else if (target === 'std::priority_queue') {
+        dsGuidance = `Use std::priority_queue from <queue>.
+Replace sort+back/front access patterns with .push() and .top()/.pop().`;
+    } else if (target === 'Trie') {
+        dsGuidance = `Implement a lightweight TrieNode struct with children[26] and bool isEnd.
+Only create the Trie if the original code does repeated string prefix matching.`;
+    } else if (target === 'Segment Tree') {
+        dsGuidance = `Only use a Segment Tree if the original code does RANGE SUM/MIN/MAX QUERIES with point updates.
+Do NOT use a Segment Tree for simple value lookups — that is slower than linear search.
+If the code only does find/search, use std::unordered_set instead.`;
+    } else if (target === 'Skip List') {
+        dsGuidance = `Implement a lightweight skip list with probabilistic levels for O(log n) search on linked data.`;
+    }
 
-Rules:
-- Preserve original logic
-- Replace all operations accordingly
-- Use correct STL or standard implementation
-- If transformation requires redesign (like structs), explain clearly
-- Do not break behavior
-- Output STRICT JSON matching this schema:
-{
-  "new_code": "string",
-  "changes": ["string"],
-  "warnings": ["string"]
-}
+    const prompt = `You are a C++ performance engineer. Refactor the code to use ${input.targetDS}.
+
+CRITICAL PERFORMANCE RULES:
+1. The refactored code MUST be FASTER than the original. If it would be slower, keep the original.
+2. Use STL containers (e.g., std::unordered_set) whenever possible. Do NOT over-engineer custom structs.
+3. Do NOT build heavy data structures (trees, graphs) for simple lookups — use hash-based O(1) containers.
+4. Preserve the EXACT same function signatures, input/output behavior, and logic flow.
+5. Only add new #include headers as needed. Keep the code minimal and clean.
+
+TARGET DATA STRUCTURE GUIDANCE:
+${dsGuidance}
 
 Original Data Structure: ${input.currentDS}
 
@@ -47,6 +71,13 @@ Code:
 \`\`\`cpp
 ${input.code}
 \`\`\`
+
+Output STRICT JSON matching this schema:
+{
+  "new_code": "string (the complete refactored file)",
+  "changes": ["string (list each specific change made)"],
+  "warnings": ["string (any performance caveats)"]
+}
 `;
 
     logDebug('AIService', 'Requesting semantic refactor from Qwen3 Coder', { targetDS: input.targetDS });

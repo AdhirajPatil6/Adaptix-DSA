@@ -45,6 +45,8 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
         webviewView.webview.onDidReceiveMessage(message => {
             if (message.command === 'applyRefactor') {
                 vscode.commands.executeCommand('adaptix.applyRefactor', message.varName, message.targetStructure);
+            } else if (message.command === 'setProfile') {
+                vscode.commands.executeCommand('adaptix.setProfile', message.profile);
             }
         });
 
@@ -331,7 +333,24 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                 </div>
 
                 <div class="main-content">
-                    <div class="section-header">
+                    
+                    <div class="profile-selector">
+                        <div class="section-header" style="margin-bottom: 8px;">
+                            <h2 style="font-size: 0.85rem; color: var(--text-secondary);">Optimization Target</h2>
+                        </div>
+                        <div class="segmented-control">
+                            <input type="radio" id="opt-speed" name="opt-profile" value="speed" onchange="setProfile('speed')" checked>
+                            <label for="opt-speed" title="Optimize strictly for Big-O execution time">Speed</label>
+                            
+                            <input type="radio" id="opt-balanced" name="opt-profile" value="balanced" onchange="setProfile('balanced')">
+                            <label for="opt-balanced" title="Dilute memory penalties by 50%">Balanced</label>
+                            
+                            <input type="radio" id="opt-memory" name="opt-profile" value="memory" onchange="setProfile('memory')">
+                            <label for="opt-memory" title="Heavily penalize structures that waste capacity (e.g. vector) or have high overhead">Memory</label>
+                        </div>
+                    </div>
+
+                    <div class="section-header" style="margin-top: 16px;">
                         <h2>Live Intelligence</h2>
                     </div>
                     <div class="cards-container">
@@ -471,6 +490,13 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                     .log-entry { padding: 8px 0; border-bottom: 1px solid var(--glass-border); display: flex; gap: 8px; align-items:flex-start; }
                     .log-entry:last-child { border-bottom: none; }
 
+                    .profile-selector { margin-bottom: 16px; background: rgba(0,0,0,0.1); padding: 12px; border-radius: 8px; border: 1px solid var(--glass-border); }
+                    .segmented-control { display: flex; background: rgba(0,0,0,0.2); border-radius: 6px; overflow: hidden; }
+                    .segmented-control input { display: none; }
+                    .segmented-control label { flex: 1; text-align: center; padding: 6px; font-size: 0.75rem; cursor: pointer; color: var(--text-secondary); transition: background 0.2s; }
+                    .segmented-control label:hover { background: rgba(255,255,255,0.05); }
+                    .segmented-control input:checked + label { background: var(--accent-blue); color: white; font-weight: bold; }
+
                 </style>
             </head>
             <body>
@@ -482,6 +508,21 @@ export class AdaptixViewProvider implements vscode.WebviewViewProvider {
                 
                 <script>
                     const vscode = acquireVsCodeApi();
+
+                    // Restore selected profile from state if available
+                    const previousState = vscode.getState();
+                    if (previousState && previousState.profile) {
+                        document.querySelector('input[value="' + previousState.profile + '"]').checked = true;
+                    }
+
+                    function setProfile(profileName) {
+                        vscode.setState({ profile: profileName });
+                        vscode.postMessage({
+                            command: 'setProfile',
+                            profile: profileName
+                        });
+                    }
+
                     function applyRefactor(varName, targetStructure) {
                         vscode.postMessage({
                             command: 'applyRefactor',

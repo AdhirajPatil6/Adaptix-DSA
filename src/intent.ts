@@ -14,11 +14,14 @@ export type IntentType =
     | 'accumulator'           // summing/reducing over container
     | 'none';
 
+export type OptimizationProfile = 'speed' | 'memory' | 'balanced';
+
 export interface IntentSignal {
     intent: IntentType;
     strength: number;  // 0.0 – 1.0 (how confident we are in this intent)
     description: string;
     suggestedDS: string | null;  // Hint for the decision engine
+    optimizationProfile: OptimizationProfile;
 }
 
 /**
@@ -47,7 +50,16 @@ export function detectIntent(
     const sortRegex = new RegExp(`(?:std::)?sort\\(\\s*${escaped}\\.begin`, 'g');
     const accumRegex = new RegExp(`\\+=\\s*${escaped}\\[|\\+=\\s*\\*?\\s*it`, 'g');
 
+    // Parse user-defined optimization profile
+    let optProfile: OptimizationProfile = 'speed'; // default is speed
+    const profileMemoryRegex = /adaptix:\s*optimize\s*(for\s*)?memory/i;
+    const profileSpeedRegex = /adaptix:\s*optimize\s*(for\s*)?speed/i;
+    const profileBalancedRegex = /adaptix:\s*optimize\s*(for\s*)?(both|balanced)/i;
+
     for (const line of lines) {
+        if (line.match(profileMemoryRegex)) optProfile = 'memory';
+        else if (line.match(profileBalancedRegex)) optProfile = 'balanced';
+        else if (line.match(profileSpeedRegex)) optProfile = 'speed';
         // Frequency counting: mp[key]++ / mp[key] += 1
         if (freqCountRegex.test(line)) { frequencyCount++; }
         freqCountRegex.lastIndex = 0;
@@ -80,7 +92,8 @@ export function detectIntent(
             intent: 'frequency_counting',
             strength: Math.min(frequencyCount / 5, 1.0),
             description: `Frequency counting pattern detected (${frequencyCount} occurrences of ${varName}[key]++ style)`,
-            suggestedDS: 'std::unordered_map'
+            suggestedDS: 'std::unordered_map',
+            optimizationProfile: optProfile
         };
     }
 
@@ -89,7 +102,8 @@ export function detectIntent(
             intent: 'sorted_iteration',
             strength: 0.8,
             description: `Sort + iteration pattern: data is sorted then iterated sequentially`,
-            suggestedDS: currentStructure.includes('map') ? 'std::map' : 'std::set'
+            suggestedDS: currentStructure.includes('map') ? 'std::map' : 'std::set',
+            optimizationProfile: optProfile
         };
     }
 
@@ -98,7 +112,8 @@ export function detectIntent(
             intent: 'lookup_heavy',
             strength: Math.min(findCount / 6, 1.0),
             description: `Lookup-heavy pattern detected (${findCount} find/count calls on ${varName})`,
-            suggestedDS: currentStructure.includes('map') ? 'std::unordered_map' : 'std::unordered_set'
+            suggestedDS: currentStructure.includes('map') ? 'std::unordered_map' : 'std::unordered_set',
+            optimizationProfile: optProfile
         };
     }
 
@@ -107,7 +122,8 @@ export function detectIntent(
             intent: 'sequential_access',
             strength: Math.min(iterationCount / 4, 1.0),
             description: `Sequential access pattern: container is iterated ${iterationCount} times`,
-            suggestedDS: 'std::vector'
+            suggestedDS: 'std::vector',
+            optimizationProfile: optProfile
         };
     }
 
@@ -116,7 +132,8 @@ export function detectIntent(
             intent: 'accumulator',
             strength: 0.5,
             description: `Accumulator/reduction pattern detected over ${varName}`,
-            suggestedDS: 'std::vector'
+            suggestedDS: 'std::vector',
+            optimizationProfile: optProfile
         };
     }
 
@@ -124,6 +141,7 @@ export function detectIntent(
         intent: 'none',
         strength: 0,
         description: 'No clear usage pattern detected',
-        suggestedDS: null
+        suggestedDS: null,
+        optimizationProfile: optProfile
     };
 }

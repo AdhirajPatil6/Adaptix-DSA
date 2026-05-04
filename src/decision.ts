@@ -113,8 +113,13 @@ export function getComplexityWeight(ds: string, operation: 'search' | 'insert' |
     // Base: O(1)=1, O(logN)=5, O(N)=100
     if (ds.includes('vector')) {
         if (operation === 'insert') { return 1; }  // amortized push_back
-        if (operation === 'search') { return 100; } // linear scan
+        if (operation === 'search') { return 100; } // linear scan (fast due to cache)
         return 100; // erase is O(n) shift
+    }
+    if (ds.includes('deque')) {
+        if (operation === 'insert') { return 2; } // fast front/back, but chunk allocation overhead
+        if (operation === 'search') { return 150; } // O(N) scan, severely slower than vector due to cache misses across memory chunks
+        return 50; // erase is O(N) but generally shifts fewer elements than vector
     }
     if (ds.includes('list')) {
         if (operation === 'search') { return 100 * 3; } // O(n) + cache-miss penalty (3x)
@@ -125,6 +130,20 @@ export function getComplexityWeight(ds: string, operation: 'search' | 'insert' |
     if (ds === 'std::unordered_map' || ds === 'std::unordered_set') {
         // O(1) amortized, but add collision penalty
         return operation === 'search' ? 1.5 : 1;
+    }
+    if (ds === 'std::priority_queue') {
+        if (operation === 'insert') { return 5; } // O(log n)
+        if (operation === 'search') { return 1; } // O(1) to get max/min
+        return 5; // O(log n) pop
+    }
+    if (ds === 'Trie') {
+        return operation === 'search' ? 3 : 3; // O(K) where K is string length
+    }
+    if (ds === 'Segment Tree') {
+        return 5; // O(log n) for range queries and updates
+    }
+    if (ds === 'Skip List') {
+        return 5; // O(log n) search/insert
     }
     return 10;
 }
@@ -137,12 +156,61 @@ export function getComplexityString(ds: string, operation: 'search' | 'insert' |
     return 'O(n)';
 }
 
-function calculateCost(ds: string, monitor: Monitor): number {
+/**
+ * Per-element memory overhead in bytes (approximate for 64-bit systems).
+ * This is used as a standalone cost dimension in memory-optimized mode,
+ * NOT as a small multiplier on top of time cost.
+ */
+function getMemoryOverhead(ds: string): number {
+    // vector: 4 bytes per int + ~50% wasted capacity from doubling
+    if (ds.includes('vector'))      return 6;
+    // deque: 4 bytes per int, ~0% wasted capacity (chunk-based)
+    if (ds.includes('deque'))       return 4;
+    // list: 4 bytes data + 16 bytes (2 pointers) per node
+    if (ds.includes('list'))        return 20;
+    // unordered_map/set: 4 bytes data + ~32 bytes hash bucket overhead
+    if (ds.includes('unordered'))   return 36;
+    // map/set (RB-Tree): 4 bytes data + 24 bytes (3 pointers) per node
+    if (ds === 'std::map' || ds === 'std::set') return 28;
+    // priority_queue: backed by vector internally
+    if (ds === 'std::priority_queue') return 6;
+    // Trie: ~26 children pointers per node, very high memory
+    if (ds === 'Trie')              return 210;
+    // Segment Tree: 4x array size
+    if (ds === 'Segment Tree')      return 16;
+    // Skip List: multiple forward pointers per node
+    if (ds === 'Skip List')         return 32;
+    return 10;
+}
+
+function calculateCost(ds: string, monitor: Monitor, optProfile: 'speed' | 'memory' | 'balanced' = 'speed'): number {
     // Segment Tree used for aggregating operation costs via monitor.queryCost()
     const [insertOps, searchOps, deleteOps] = monitor.operationCosts;
-    return (insertOps * getComplexityWeight(ds, 'insert')) +
+    const totalOps = insertOps + searchOps + deleteOps;
+    
+    // TIME COST: Big-O weighted operation count
+    const timeCost = (insertOps * getComplexityWeight(ds, 'insert')) +
         (searchOps * getComplexityWeight(ds, 'search')) +
         (deleteOps * getComplexityWeight(ds, 'delete'));
+
+    if (optProfile === 'speed') {
+        // Pure time optimization — memory is irrelevant
+        return timeCost;
+    }
+
+    // MEMORY COST: per-element byte overhead scaled by total operations
+    // This makes memory cost comparable in magnitude to time cost
+    const memoryCost = getMemoryOverhead(ds) * Math.max(totalOps, 1) * 5;
+
+    if (optProfile === 'memory') {
+        // Memory-first: memory cost is the PRIMARY dimension,
+        // time cost is used only as a tiebreaker (10% weight)
+        return memoryCost + (timeCost * 0.1);
+    }
+
+    // BALANCED: geometric mean of time and memory costs
+    // This ensures both dimensions have equal influence on ranking
+    return Math.sqrt(timeCost * memoryCost);
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -254,8 +322,10 @@ export class DecisionEngine {
             }
         }
 
+        const optProfile = intentSignal?.optimizationProfile || 'speed';
+
         // Current cost
-        const currentCost = calculateCost(currentStructure, monitor);
+        const currentCost = calculateCost(currentStructure, monitor, optProfile);
         // Determine truly dominant operation by comparing all three ratios
         const ratios: [('search' | 'insert' | 'delete'), number][] = [
             ['search', searchRatio], ['insert', insertRatio], ['delete', deleteRatio]
@@ -274,7 +344,7 @@ export class DecisionEngine {
 
             for (const ds of valid) {
                 if (ds === currentStructure) continue;
-                let cost = calculateCost(ds, monitor);
+                let cost = calculateCost(ds, monitor, optProfile);
                 // Give a slight bonus (cost reduction) to the preferred intent structure
                 if (ds === preferredFromIntent) {
                     cost *= 0.8;
@@ -305,7 +375,7 @@ export class DecisionEngine {
         }
 
         if (suggestion && suggestion !== currentStructure) {
-            const suggestedCost = calculateCost(suggestion, monitor);
+            const suggestedCost = calculateCost(suggestion, monitor, optProfile);
 
             if (currentCost > suggestedCost || suggestion === preferredFromIntent) {
                 const speedupRatio = currentCost / Math.max(suggestedCost, 1);
@@ -361,7 +431,7 @@ export class DecisionEngine {
                     // Priority Queue (Min-Heap) used for ranking alternative data structure
                     const altHeap = new MinHeap();
                     for (const v of remainingValid) {
-                        altHeap.push({ name: v, score: calculateCost(v, monitor) });
+                        altHeap.push({ name: v, score: calculateCost(v, monitor, optProfile) });
                     }
                     const secondBestEntry = altHeap.pop();
                     let secondBest = secondBestEntry ? secondBestEntry.name : remainingValid[0];

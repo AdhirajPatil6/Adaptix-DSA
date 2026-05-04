@@ -40,6 +40,7 @@ export class Analyzer {
      */
     private variables: Map<string, Monitor> = new Map();
     private decisionEngine: DecisionEngine;
+    private globalProfile: 'speed' | 'memory' | 'balanced' = 'speed';
 
     constructor(learningLayer?: LearningLayer) {
         this.decisionEngine = new DecisionEngine(learningLayer);
@@ -57,6 +58,13 @@ export class Analyzer {
 
     public clear() {
         this.variables.clear();
+    }
+
+    public setGlobalProfile(profile: 'speed' | 'memory' | 'balanced') {
+        this.globalProfile = profile;
+        // Invalidate cache so changes take effect immediately
+        this.lastTextHash = 0;
+        this.cachedResults.clear();
     }
 
     /**
@@ -340,6 +348,15 @@ export class Analyzer {
 
             // Step 1.5: Pattern Detection (Advanced DS Heuristics)
             const patternMatch = detectPatterns(varName, lines, context);
+
+            // Check for explicit comment overrides first, otherwise fallback to UI global setting
+            let effectiveProfile = this.globalProfile;
+            if (intentSignal.optimizationProfile !== 'speed') {
+                // This means the user typed a specific comment like `// adaptix: optimize memory` for this var
+                // It overrides the global UI setting.
+                effectiveProfile = intentSignal.optimizationProfile;
+            }
+            intentSignal.optimizationProfile = effectiveProfile;
 
             let decision = this.decisionEngine.determineBestStructure(monitor, constraints, intentSignal, patternMatch);
 

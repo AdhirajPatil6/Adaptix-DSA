@@ -47,6 +47,14 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	context.subscriptions.push(showInsightsCommand);
 
+	const setProfileCommand = vscode.commands.registerCommand('adaptix.setProfile', (profile: 'speed' | 'memory' | 'balanced') => {
+		analyzer.setGlobalProfile(profile);
+		if (vscode.window.activeTextEditor) {
+			triggerUpdate(vscode.window.activeTextEditor.document);
+		}
+	});
+	context.subscriptions.push(setProfileCommand);
+
 	// Register Apply Refactor Command — uses plan-based system
 	const applyRefactorCommand = vscode.commands.registerCommand('adaptix.applyRefactor', async (varName: string, targetStructure: string) => {
 		const editor = vscode.window.activeTextEditor;
