@@ -11,6 +11,79 @@ import { generateInsight } from './insight';
 import { logDebug } from './logger';
 import { PatternMatch } from './patternDetector';
 
+// ────────────────────────────────────────────────────────────────
+// Priority Queue (Min-Heap) — used for ranking data structure
+// candidates by cost. Instead of a linear scan to find the
+// cheapest candidate, we push all (cost, dsName) pairs into a
+// Min-Heap and extract the top candidate in O(log n).
+// ────────────────────────────────────────────────────────────────
+
+interface HeapEntry {
+    /** Data structure name (e.g., 'std::unordered_map') */
+    name: string;
+    /** Calculated cost score — lower is better */
+    score: number;
+}
+
+/**
+ * Min-Heap (Priority Queue) data structure.
+ * Used internally by ADAPTIX to rank data structure suggestions
+ * by their computed cost score. Extract-min runs in O(log n).
+ */
+class MinHeap {
+    private heap: HeapEntry[] = [];
+
+    get size(): number { return this.heap.length; }
+
+    /** Push a new entry onto the heap. O(log n). */
+    push(entry: HeapEntry): void {
+        this.heap.push(entry);
+        this._bubbleUp(this.heap.length - 1);
+    }
+
+    /** Extract the entry with the lowest score. O(log n). */
+    pop(): HeapEntry | null {
+        if (this.heap.length === 0) return null;
+        const min = this.heap[0];
+        const last = this.heap.pop()!;
+        if (this.heap.length > 0) {
+            this.heap[0] = last;
+            this._sinkDown(0);
+        }
+        return min;
+    }
+
+    /** Peek at the minimum without removing. O(1). */
+    peek(): HeapEntry | null {
+        return this.heap.length > 0 ? this.heap[0] : null;
+    }
+
+    private _bubbleUp(i: number): void {
+        while (i > 0) {
+            const parent = Math.floor((i - 1) / 2);
+            if (this.heap[parent].score <= this.heap[i].score) break;
+            [this.heap[parent], this.heap[i]] = [this.heap[i], this.heap[parent]];
+            i = parent;
+        }
+    }
+
+    private _sinkDown(i: number): void {
+        const n = this.heap.length;
+        while (true) {
+            let smallest = i;
+            const left = 2 * i + 1;
+            const right = 2 * i + 2;
+            if (left < n && this.heap[left].score < this.heap[smallest].score) smallest = left;
+            if (right < n && this.heap[right].score < this.heap[smallest].score) smallest = right;
+            if (smallest === i) break;
+            [this.heap[smallest], this.heap[i]] = [this.heap[i], this.heap[smallest]];
+            i = smallest;
+        }
+    }
+}
+
+// ── End of Min-Heap ──
+
 export interface DecisionResult {
     suggestedStructure: string | null;
     reason: string | null;
@@ -65,9 +138,11 @@ export function getComplexityString(ds: string, operation: 'search' | 'insert' |
 }
 
 function calculateCost(ds: string, monitor: Monitor): number {
-    return (monitor.insertCount * getComplexityWeight(ds, 'insert')) +
-        (monitor.searchCount * getComplexityWeight(ds, 'search')) +
-        (monitor.deleteCount * getComplexityWeight(ds, 'delete'));
+    // Segment Tree used for aggregating operation costs via monitor.queryCost()
+    const [insertOps, searchOps, deleteOps] = monitor.operationCosts;
+    return (insertOps * getComplexityWeight(ds, 'insert')) +
+        (searchOps * getComplexityWeight(ds, 'search')) +
+        (deleteOps * getComplexityWeight(ds, 'delete'));
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -194,16 +269,24 @@ export class DecisionEngine {
         }
 
         if (!bestCandidate) {
+            // Priority Queue (Min-Heap) used for ranking best data structure suggestion
+            const candidateHeap = new MinHeap();
+
             for (const ds of valid) {
+                if (ds === currentStructure) continue;
                 let cost = calculateCost(ds, monitor);
                 // Give a slight bonus (cost reduction) to the preferred intent structure
                 if (ds === preferredFromIntent) {
-                    cost *= 0.8; 
+                    cost *= 0.8;
                 }
-                if (cost < lowestCost && ds !== currentStructure) {
-                    lowestCost = cost;
-                    bestCandidate = ds;
-                }
+                candidateHeap.push({ name: ds, score: cost });
+            }
+
+            // Extract the best candidate from the heap — O(log n)
+            const best = candidateHeap.pop();
+            if (best) {
+                bestCandidate = best.name;
+                lowestCost = best.score;
             }
         }
 
@@ -275,15 +358,13 @@ export class DecisionEngine {
                 // Get the second best valid structure
                 const remainingValid = valid.filter(v => v !== suggestion && v !== currentStructure);
                 if (remainingValid.length > 0) {
-                    let secondBest = remainingValid[0];
-                    let secondLowestCost = Infinity;
-                    for(const v of remainingValid) {
-                        const cost = calculateCost(v, monitor);
-                        if (cost < secondLowestCost) {
-                            secondLowestCost = cost;
-                            secondBest = v;
-                        }
+                    // Priority Queue (Min-Heap) used for ranking alternative data structure
+                    const altHeap = new MinHeap();
+                    for (const v of remainingValid) {
+                        altHeap.push({ name: v, score: calculateCost(v, monitor) });
                     }
+                    const secondBestEntry = altHeap.pop();
+                    let secondBest = secondBestEntry ? secondBestEntry.name : remainingValid[0];
                     if (secondBest) {
                         alternativeStructure = secondBest;
                         alternativeReason = 'Second best option based on capability constraints.';

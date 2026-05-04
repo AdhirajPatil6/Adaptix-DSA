@@ -57,7 +57,7 @@ ${input.code}
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model: 'qwen3-coder:480b-cloud', // Standard ollama qwen coder model name
+                model: 'gpt-oss:120b-cloud', // Standard ollama qwen coder model name
                 prompt: prompt,
                 stream: false,
                 format: 'json'
@@ -69,7 +69,7 @@ ${input.code}
         }
 
         const data = await response.json() as { response: string };
-        
+
         // Strip markdown backticks if the AI wrapped the response
         let cleanJson = data.response.trim();
         if (cleanJson.startsWith('```json')) {
@@ -85,7 +85,7 @@ ${input.code}
         const parsed = JSON.parse(cleanJson) as SemanticRefactorResult;
 
         logDebug('AIService', 'Received semantic refactor from AI', { changes: parsed.changes.length });
-        
+
         return {
             new_code: parsed.new_code || input.code,
             changes: parsed.changes || [],

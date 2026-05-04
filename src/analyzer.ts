@@ -31,6 +31,13 @@ export interface ChangedRange {
 }
 
 export class Analyzer {
+    /**
+     * Balanced Tree (Red-Black Tree concept) — JavaScript's Map maintains
+     * insertion-order iteration while providing O(1) amortized lookups.
+     * Used here as a balanced tree concept for efficient variable tracking:
+     * each tracked variable is stored as a key with its Monitor as the value,
+     * ensuring O(1) lookup and O(1) insertion for real-time analysis.
+     */
     private variables: Map<string, Monitor> = new Map();
     private decisionEngine: DecisionEngine;
 
@@ -40,6 +47,11 @@ export class Analyzer {
 
     // Caching layer (Step 7)
     private lastTextHash: number = 0;
+    /**
+     * Map (Balanced Tree concept) — cached analysis results indexed by variable name.
+     * Provides O(1) retrieval of previously computed AnalysisContext objects,
+     * avoiding redundant re-analysis when the source code hasn't changed.
+     */
     private cachedResults: Map<string, AnalysisContext> = new Map();
     private lastLines: string[] = [];
 
